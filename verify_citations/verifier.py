@@ -247,17 +247,8 @@ class CitationVerifier:
                     title_match = None
                     if page_title:
                         online_title = page_title.get_text().replace('Title:', '').strip().lower()
-                        # Improved similarity check: check if significant words match
-                        title_words = set(word for word in title.split() 
-                                        if len(word) > self.MIN_WORD_LENGTH)
-                        online_words = set(word for word in online_title.split() 
-                                         if len(word) > self.MIN_WORD_LENGTH)
-                        
-                        if title_words and online_words:
-                            # Calculate simple word overlap ratio
-                            overlap = len(title_words & online_words)
-                            title_similarity = overlap / max(len(title_words), len(online_words))
-                            title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
+                        title_similarity = self._calculate_title_similarity(title, online_title)
+                        title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
                     
                     # Check authors
                     authors_div = soup.find('div', class_='authors')
@@ -269,28 +260,11 @@ class CitationVerifier:
                         online_author_names = self._extract_author_names(online_authors)
                         
                         if entry_author_names and online_author_names:
-                            # Check if most authors match
-                            matching_authors = sum(1 for name in entry_author_names 
-                                                 if any(name in online_name or online_name in name 
-                                                       for online_name in online_author_names))
-                            author_similarity = matching_authors / max(len(entry_author_names), len(online_author_names))
+                            author_similarity = self._calculate_author_similarity(entry_author_names, online_author_names)
                             author_match = author_similarity >= 0.5  # At least 50% of authors should match
                     
-                    # Combine results
-                    if title_match is not None and author_match is not None:
-                        if title_match and author_match:
-                            return True, "✓ Metadata (title and authors) verified"
-                        elif title_match and not author_match:
-                            return False, "✗ Title matches but author list mismatch detected"
-                        elif not title_match and author_match:
-                            return False, f"✗ Title mismatch detected"
-                        else:
-                            return False, "✗ Both title and author mismatches detected"
-                    elif title_match is not None:
-                        if title_match:
-                            return True, "✓ Title verified (authors not checked)"
-                        else:
-                            return False, f"✗ Title mismatch detected"
+                    # Format and return result
+                    return self._format_metadata_result(title_match, author_match)
             
             # Check Semantic Scholar metadata
             elif 'semanticscholar.org' in search_url:
@@ -308,15 +282,9 @@ class CitationVerifier:
                         online_authors = data.get('authors', [])
                         
                         # Check title
-                        title_words = set(word for word in title.split() 
-                                        if len(word) > self.MIN_WORD_LENGTH)
-                        online_words = set(word for word in online_title.split() 
-                                         if len(word) > self.MIN_WORD_LENGTH)
-                        
                         title_match = None
-                        if title_words and online_words:
-                            overlap = len(title_words & online_words)
-                            title_similarity = overlap / max(len(title_words), len(online_words))
+                        if online_title:
+                            title_similarity = self._calculate_title_similarity(title, online_title)
                             title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
                         
                         # Check authors
@@ -324,30 +292,21 @@ class CitationVerifier:
                         if online_authors and entry_authors:
                             online_author_names = [author.get('name', '').lower() 
                                                   for author in online_authors]
+                            # Extract last names from online authors
+                            online_last_names = []
+                            for name in online_author_names:
+                                parts = name.split()
+                                if parts:
+                                    online_last_names.append(parts[-1])
+                            
                             entry_author_names = self._extract_author_names(entry_authors)
                             
-                            if entry_author_names and online_author_names:
-                                matching_authors = sum(1 for name in entry_author_names 
-                                                     if any(name in online_name or online_name in name 
-                                                           for online_name in online_author_names))
-                                author_similarity = matching_authors / max(len(entry_author_names), len(online_author_names))
+                            if entry_author_names and online_last_names:
+                                author_similarity = self._calculate_author_similarity(entry_author_names, online_last_names)
                                 author_match = author_similarity >= 0.5
                         
-                        # Combine results
-                        if title_match is not None and author_match is not None:
-                            if title_match and author_match:
-                                return True, "✓ Metadata (title and authors) verified"
-                            elif title_match and not author_match:
-                                return False, "✗ Title matches but author list mismatch detected"
-                            elif not title_match and author_match:
-                                return False, "✗ Title mismatch detected"
-                            else:
-                                return False, "✗ Both title and author mismatches detected"
-                        elif title_match is not None:
-                            if title_match:
-                                return True, "✓ Title verified (authors not checked)"
-                            else:
-                                return False, "✗ Title mismatch detected"
+                        # Format and return result
+                        return self._format_metadata_result(title_match, author_match)
         except Exception as e:
             pass
 
@@ -363,21 +322,21 @@ class CitationVerifier:
         Returns:
             List of author last names in lowercase
         """
-        # Common separators in BibTeX: "and", commas
-        authors = re.split(r'\s+and\s+|,\s*', author_string.lower())
+        # Split by "and" first to separate authors
+        authors = re.split(r'\s+and\s+', author_string.lower())
         
-        # Extract last names (typically the first word before comma or last word)
+        # Extract last names
         last_names = []
         for author in authors:
             author = author.strip()
             if not author:
                 continue
             
-            # Handle "Last, First" format
+            # Handle "Last, First Middle" format
             if ',' in author:
                 last_name = author.split(',')[0].strip()
             else:
-                # Handle "First Last" format - take last word
+                # Handle "First Middle Last" format - take last word
                 words = author.split()
                 if words:
                     last_name = words[-1].strip()
@@ -390,6 +349,75 @@ class CitationVerifier:
                 last_names.append(last_name)
         
         return last_names
+    
+    def _calculate_title_similarity(self, title1: str, title2: str) -> float:
+        """
+        Calculate similarity between two titles based on word overlap.
+        
+        Args:
+            title1: First title (lowercase)
+            title2: Second title (lowercase)
+            
+        Returns:
+            Similarity score between 0 and 1
+        """
+        words1 = set(word for word in title1.split() 
+                    if len(word) > self.MIN_WORD_LENGTH)
+        words2 = set(word for word in title2.split() 
+                    if len(word) > self.MIN_WORD_LENGTH)
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        overlap = len(words1 & words2)
+        return overlap / max(len(words1), len(words2))
+    
+    def _calculate_author_similarity(self, entry_names: List[str], online_names: List[str]) -> float:
+        """
+        Calculate similarity between two author lists.
+        
+        Args:
+            entry_names: List of author last names from BibTeX entry
+            online_names: List of author last names from online source
+            
+        Returns:
+            Similarity score between 0 and 1
+        """
+        if not entry_names or not online_names:
+            return 0.0
+        
+        # Use exact matching on last names to avoid false positives
+        matching_authors = sum(1 for name in entry_names 
+                             if name in online_names)
+        return matching_authors / max(len(entry_names), len(online_names))
+    
+    def _format_metadata_result(self, title_match: Optional[bool], author_match: Optional[bool]) -> Tuple[Optional[bool], str]:
+        """
+        Format metadata verification result based on title and author matches.
+        
+        Args:
+            title_match: Whether title matches (True/False/None)
+            author_match: Whether authors match (True/False/None)
+            
+        Returns:
+            Tuple of (overall_match, message)
+        """
+        if title_match is not None and author_match is not None:
+            if title_match and author_match:
+                return True, "✓ Metadata (title and authors) verified"
+            elif title_match and not author_match:
+                return False, "✗ Title matches but author list mismatch detected"
+            elif not title_match and author_match:
+                return False, "✗ Title mismatch detected"
+            else:
+                return False, "✗ Both title and author mismatches detected"
+        elif title_match is not None:
+            if title_match:
+                return True, "✓ Title verified (authors not checked)"
+            else:
+                return False, "✗ Title mismatch detected"
+        
+        return None, "- Could not verify metadata automatically"
 
     def _check_version_info(self, entry: Dict) -> Optional[str]:
         """
