@@ -3,7 +3,6 @@ Core citation verification logic.
 """
 
 import re
-import time
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, quote_plus
 
@@ -150,9 +149,14 @@ class CitationVerifier:
             Tuple of (valid, message)
         """
         try:
-            # Handle arXiv eprint IDs
+            # Handle arXiv eprint IDs - convert to full URL
+            # Assumes bare IDs like "1706.03762" are arXiv IDs
             if not url.startswith('http'):
-                url = f"https://arxiv.org/abs/{url}"
+                # Check if it looks like an arXiv ID
+                if re.match(r'\d{4}\.\d{4,5}', url):
+                    url = f"https://arxiv.org/abs/{url}"
+                else:
+                    return False, f"✗ Invalid URL format: {url}"
             
             response = self.session.head(url, timeout=self.timeout, allow_redirects=True)
             if response.status_code == 200:

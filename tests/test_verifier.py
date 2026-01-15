@@ -4,7 +4,6 @@ Tests for citation verification functionality.
 
 import os
 import tempfile
-from pathlib import Path
 
 import pytest
 
