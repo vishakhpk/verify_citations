@@ -12,10 +12,6 @@ from .parser import parse_bibtex_file, format_entry_summary
 from .verifier import CitationVerifier
 
 
-# Initialize colorama for cross-platform colored output
-init(autoreset=True)
-
-
 @click.command()
 @click.argument('bibtex_file', type=click.Path(exists=True))
 @click.option('--timeout', default=10, help='Request timeout in seconds')
@@ -35,6 +31,9 @@ def main(bibtex_file, timeout, verbose, summary_only):
         verify-citations references.bib
         verify-citations references.bib --verbose
     """
+    # Initialize colorama for cross-platform colored output
+    init(autoreset=True)
+    
     click.echo(f"{Fore.CYAN}=== Citation Verification Tool ==={Style.RESET_ALL}\n")
     click.echo(f"Processing: {bibtex_file}\n")
     

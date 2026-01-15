@@ -109,14 +109,17 @@ class CitationVerifier:
             query = f'"{title}"'
             search_url = f"https://scholar.google.com/scholar?q={quote_plus(query)}"
             
-            # For demonstration, we'll check if we can reach Google Scholar
-            # In production, you'd parse results
             response = self.session.get(search_url, timeout=self.timeout)
             
             if response.status_code == 200:
-                # Simple heuristic: if we get a valid response, assume paper is findable
-                # A more sophisticated implementation would parse the results
-                return True, search_url
+                # Check if results contain the title (basic heuristic)
+                # This is a simplified check - production would parse structured results
+                content = response.text.lower()
+                title_words = title.lower().split()
+                # Consider found if at least half of title words appear in results
+                matches = sum(1 for word in title_words if len(word) > 3 and word in content)
+                if matches >= len(title_words) / 2:
+                    return True, search_url
         except Exception as e:
             pass
 
@@ -166,8 +169,6 @@ class CitationVerifier:
         Returns:
             Tuple of (correct, message)
         """
-        # This is a simplified check
-        # In production, you'd fetch and parse the search results/paper page
         title = entry.get('title', '').strip('{}').lower()
         
         try:
@@ -178,11 +179,19 @@ class CitationVerifier:
                     page_title = soup.find('h1', class_='title')
                     if page_title:
                         online_title = page_title.get_text().replace('Title:', '').strip().lower()
-                        # Simple similarity check
-                        if title in online_title or online_title in title:
-                            return True, "✓ Metadata appears correct"
-                        else:
-                            return False, f"✗ Title mismatch detected"
+                        # Improved similarity check: check if significant words match
+                        title_words = set(word for word in title.split() if len(word) > 3)
+                        online_words = set(word for word in online_title.split() if len(word) > 3)
+                        
+                        if title_words and online_words:
+                            # Calculate simple word overlap ratio
+                            overlap = len(title_words & online_words)
+                            similarity = overlap / max(len(title_words), len(online_words))
+                            
+                            if similarity >= 0.7:  # 70% word overlap threshold
+                                return True, "✓ Metadata appears correct"
+                            else:
+                                return False, f"✗ Title mismatch detected (similarity: {similarity:.0%})"
         except Exception as e:
             pass
 
