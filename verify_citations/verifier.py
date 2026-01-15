@@ -13,6 +13,11 @@ from bs4 import BeautifulSoup
 
 class CitationVerifier:
     """Verifies citations from BibTeX entries."""
+    
+    # Constants for verification thresholds
+    MIN_WORD_LENGTH = 3  # Minimum word length to consider in matching
+    TITLE_MATCH_THRESHOLD = 0.5  # Minimum fraction of title words to match for findability
+    METADATA_SIMILARITY_THRESHOLD = 0.7  # Minimum word overlap for metadata verification
 
     def __init__(self, timeout: int = 10):
         """
@@ -116,9 +121,10 @@ class CitationVerifier:
                 # This is a simplified check - production would parse structured results
                 content = response.text.lower()
                 title_words = title.lower().split()
-                # Consider found if at least half of title words appear in results
-                matches = sum(1 for word in title_words if len(word) > 3 and word in content)
-                if matches >= len(title_words) / 2:
+                # Consider found if at least threshold fraction of title words appear in results
+                matches = sum(1 for word in title_words 
+                            if len(word) > self.MIN_WORD_LENGTH and word in content)
+                if matches >= len(title_words) * self.TITLE_MATCH_THRESHOLD:
                     return True, search_url
         except Exception as e:
             pass
@@ -180,15 +186,17 @@ class CitationVerifier:
                     if page_title:
                         online_title = page_title.get_text().replace('Title:', '').strip().lower()
                         # Improved similarity check: check if significant words match
-                        title_words = set(word for word in title.split() if len(word) > 3)
-                        online_words = set(word for word in online_title.split() if len(word) > 3)
+                        title_words = set(word for word in title.split() 
+                                        if len(word) > self.MIN_WORD_LENGTH)
+                        online_words = set(word for word in online_title.split() 
+                                         if len(word) > self.MIN_WORD_LENGTH)
                         
                         if title_words and online_words:
                             # Calculate simple word overlap ratio
                             overlap = len(title_words & online_words)
                             similarity = overlap / max(len(title_words), len(online_words))
                             
-                            if similarity >= 0.7:  # 70% word overlap threshold
+                            if similarity >= self.METADATA_SIMILARITY_THRESHOLD:
                                 return True, "✓ Metadata appears correct"
                             else:
                                 return False, f"✗ Title mismatch detected (similarity: {similarity:.0%})"
