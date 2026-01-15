@@ -107,6 +107,51 @@ class CitationVerifier:
         if not title:
             return False, None
 
+        # Try arXiv first if available (most reliable)
+        arxiv_id = entry.get('eprint', '') or self._extract_arxiv_id(entry.get('url', ''))
+        if arxiv_id:
+            try:
+                arxiv_url = f"https://arxiv.org/abs/{arxiv_id}"
+                response = self.session.get(arxiv_url, timeout=self.timeout)
+                if response.status_code == 200:
+                    return True, arxiv_url
+            except Exception:
+                pass
+
+        # Try Semantic Scholar API
+        try:
+            # Semantic Scholar API for paper search
+            api_url = f"https://api.semanticscholar.org/graph/v1/paper/search"
+            params = {
+                'query': title,
+                'limit': 1,
+                'fields': 'title,authors,url'
+            }
+            response = self.session.get(api_url, params=params, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('data') and len(data['data']) > 0:
+                    paper = data['data'][0]
+                    # Check if the title matches reasonably well
+                    found_title = paper.get('title', '').lower()
+                    title_words = set(word for word in title.lower().split() 
+                                    if len(word) > self.MIN_WORD_LENGTH)
+                    found_words = set(word for word in found_title.split() 
+                                    if len(word) > self.MIN_WORD_LENGTH)
+                    
+                    if title_words and found_words:
+                        overlap = len(title_words & found_words)
+                        similarity = overlap / max(len(title_words), len(found_words))
+                        
+                        if similarity >= self.TITLE_MATCH_THRESHOLD:
+                            paper_id = paper.get('paperId', '')
+                            if paper_id:
+                                semantic_url = f"https://www.semanticscholar.org/paper/{paper_id}"
+                                return True, semantic_url
+        except Exception as e:
+            pass
+
         # Try Google Scholar search
         try:
             # Create search query with title
@@ -117,7 +162,6 @@ class CitationVerifier:
             
             if response.status_code == 200:
                 # Check if results contain the title (basic heuristic)
-                # This is a simplified check - production would parse structured results
                 content = response.text.lower()
                 title_words = title.lower().split()
                 # Consider found if at least threshold fraction of title words appear in results
@@ -128,16 +172,24 @@ class CitationVerifier:
         except Exception as e:
             pass
 
-        # Try arXiv if available
-        arxiv_id = entry.get('eprint', '') or self._extract_arxiv_id(entry.get('url', ''))
-        if arxiv_id:
-            try:
-                arxiv_url = f"https://arxiv.org/abs/{arxiv_id}"
-                response = self.session.get(arxiv_url, timeout=self.timeout)
-                if response.status_code == 200:
-                    return True, arxiv_url
-            except Exception:
-                pass
+        # Try regular web search (DuckDuckGo as a fallback)
+        try:
+            # Use DuckDuckGo HTML search
+            query = f'"{title}" paper pdf'
+            search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+            
+            response = self.session.get(search_url, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                content = response.text.lower()
+                title_words = title.lower().split()
+                # Consider found if at least threshold fraction of title words appear in results
+                matches = sum(1 for word in title_words 
+                            if len(word) > self.MIN_WORD_LENGTH and word in content)
+                if matches >= len(title_words) * self.TITLE_MATCH_THRESHOLD:
+                    return True, search_url
+        except Exception as e:
+            pass
 
         return False, None
 
@@ -180,6 +232,7 @@ class CitationVerifier:
             Tuple of (correct, message)
         """
         title = entry.get('title', '').strip('{}').lower()
+        entry_authors = entry.get('author', '').strip('{}')
         
         try:
             # Properly check if URL is from arxiv.org domain
@@ -188,7 +241,10 @@ class CitationVerifier:
                 response = self.session.get(search_url, timeout=self.timeout)
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, 'html.parser')
+                    
+                    # Check title
                     page_title = soup.find('h1', class_='title')
+                    title_match = None
                     if page_title:
                         online_title = page_title.get_text().replace('Title:', '').strip().lower()
                         # Improved similarity check: check if significant words match
@@ -200,16 +256,140 @@ class CitationVerifier:
                         if title_words and online_words:
                             # Calculate simple word overlap ratio
                             overlap = len(title_words & online_words)
-                            similarity = overlap / max(len(title_words), len(online_words))
+                            title_similarity = overlap / max(len(title_words), len(online_words))
+                            title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
+                    
+                    # Check authors
+                    authors_div = soup.find('div', class_='authors')
+                    author_match = None
+                    if authors_div and entry_authors:
+                        online_authors = authors_div.get_text().replace('Authors:', '').strip().lower()
+                        # Extract author last names for comparison
+                        entry_author_names = self._extract_author_names(entry_authors)
+                        online_author_names = self._extract_author_names(online_authors)
+                        
+                        if entry_author_names and online_author_names:
+                            # Check if most authors match
+                            matching_authors = sum(1 for name in entry_author_names 
+                                                 if any(name in online_name or online_name in name 
+                                                       for online_name in online_author_names))
+                            author_similarity = matching_authors / max(len(entry_author_names), len(online_author_names))
+                            author_match = author_similarity >= 0.5  # At least 50% of authors should match
+                    
+                    # Combine results
+                    if title_match is not None and author_match is not None:
+                        if title_match and author_match:
+                            return True, "✓ Metadata (title and authors) verified"
+                        elif title_match and not author_match:
+                            return False, "✗ Title matches but author list mismatch detected"
+                        elif not title_match and author_match:
+                            return False, f"✗ Title mismatch detected"
+                        else:
+                            return False, "✗ Both title and author mismatches detected"
+                    elif title_match is not None:
+                        if title_match:
+                            return True, "✓ Title verified (authors not checked)"
+                        else:
+                            return False, f"✗ Title mismatch detected"
+            
+            # Check Semantic Scholar metadata
+            elif 'semanticscholar.org' in search_url:
+                # Extract paper ID from URL
+                paper_id_match = re.search(r'/paper/([a-f0-9]+)', search_url)
+                if paper_id_match:
+                    paper_id = paper_id_match.group(1)
+                    api_url = f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}"
+                    params = {'fields': 'title,authors'}
+                    
+                    response = self.session.get(api_url, params=params, timeout=self.timeout)
+                    if response.status_code == 200:
+                        data = response.json()
+                        online_title = data.get('title', '').lower()
+                        online_authors = data.get('authors', [])
+                        
+                        # Check title
+                        title_words = set(word for word in title.split() 
+                                        if len(word) > self.MIN_WORD_LENGTH)
+                        online_words = set(word for word in online_title.split() 
+                                         if len(word) > self.MIN_WORD_LENGTH)
+                        
+                        title_match = None
+                        if title_words and online_words:
+                            overlap = len(title_words & online_words)
+                            title_similarity = overlap / max(len(title_words), len(online_words))
+                            title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
+                        
+                        # Check authors
+                        author_match = None
+                        if online_authors and entry_authors:
+                            online_author_names = [author.get('name', '').lower() 
+                                                  for author in online_authors]
+                            entry_author_names = self._extract_author_names(entry_authors)
                             
-                            if similarity >= self.METADATA_SIMILARITY_THRESHOLD:
-                                return True, "✓ Metadata appears correct"
+                            if entry_author_names and online_author_names:
+                                matching_authors = sum(1 for name in entry_author_names 
+                                                     if any(name in online_name or online_name in name 
+                                                           for online_name in online_author_names))
+                                author_similarity = matching_authors / max(len(entry_author_names), len(online_author_names))
+                                author_match = author_similarity >= 0.5
+                        
+                        # Combine results
+                        if title_match is not None and author_match is not None:
+                            if title_match and author_match:
+                                return True, "✓ Metadata (title and authors) verified"
+                            elif title_match and not author_match:
+                                return False, "✗ Title matches but author list mismatch detected"
+                            elif not title_match and author_match:
+                                return False, "✗ Title mismatch detected"
                             else:
-                                return False, f"✗ Title mismatch detected (similarity: {similarity:.0%})"
+                                return False, "✗ Both title and author mismatches detected"
+                        elif title_match is not None:
+                            if title_match:
+                                return True, "✓ Title verified (authors not checked)"
+                            else:
+                                return False, "✗ Title mismatch detected"
         except Exception as e:
             pass
 
         return None, "- Could not verify metadata automatically"
+    
+    def _extract_author_names(self, author_string: str) -> List[str]:
+        """
+        Extract author last names from author string.
+        
+        Args:
+            author_string: String containing author names
+            
+        Returns:
+            List of author last names in lowercase
+        """
+        # Common separators in BibTeX: "and", commas
+        authors = re.split(r'\s+and\s+|,\s*', author_string.lower())
+        
+        # Extract last names (typically the first word before comma or last word)
+        last_names = []
+        for author in authors:
+            author = author.strip()
+            if not author:
+                continue
+            
+            # Handle "Last, First" format
+            if ',' in author:
+                last_name = author.split(',')[0].strip()
+            else:
+                # Handle "First Last" format - take last word
+                words = author.split()
+                if words:
+                    last_name = words[-1].strip()
+                else:
+                    continue
+            
+            # Clean up any remaining punctuation
+            last_name = re.sub(r'[^\w\s-]', '', last_name)
+            if last_name and len(last_name) > 1:
+                last_names.append(last_name)
+        
+        return last_names
 
     def _check_version_info(self, entry: Dict) -> Optional[str]:
         """

@@ -118,5 +118,29 @@ def test_version_info_extraction():
     assert 'DOI: 10.1234/test' in version_info
 
 
+def test_extract_author_names():
+    """Test author name extraction."""
+    verifier = CitationVerifier()
+    
+    # Test "Last, First and Last, First" format
+    authors = "Smith, John and Doe, Jane"
+    names = verifier._extract_author_names(authors)
+    assert 'smith' in names
+    assert 'doe' in names
+    
+    # Test "First Last" format
+    authors = "John Smith and Jane Doe"
+    names = verifier._extract_author_names(authors)
+    assert 'smith' in names
+    assert 'doe' in names
+    
+    # Test mixed format
+    authors = "Smith, John and Jane Doe and Brown, Alice"
+    names = verifier._extract_author_names(authors)
+    assert 'smith' in names
+    assert 'doe' in names
+    assert 'brown' in names
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

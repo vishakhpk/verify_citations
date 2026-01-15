@@ -6,9 +6,19 @@ A simple CLI utility to verify citations in BibTeX files by checking if they are
 
 This tool performs automated checks to verify citations:
 
-1. **Online Findability**: Checks if the paper can be found online with a quick web search (using title and authors)
+1. **Online Findability**: Checks if the paper can be found online with multiple search engines:
+   - arXiv (direct lookup when arXiv ID is available)
+   - Semantic Scholar (academic paper database with API)
+   - Google Scholar (scholarly articles search)
+   - DuckDuckGo (general web search as fallback)
+
 2. **URL Validation**: Verifies that provided links are correct and accessible
-3. **Metadata Verification**: Checks if the title and author list is correct and up to date
+
+3. **Metadata Verification**: Checks if both the title AND author list match what's found online
+   - Compares paper titles with word-overlap similarity (70% threshold)
+   - Validates author lists by extracting and comparing author last names (50% match threshold)
+   - Works with arXiv and Semantic Scholar sources
+
 4. **Version Information**: Identifies the correct version among different ones online (arXiv, journal, conference)
 
 ## Installation
@@ -80,9 +90,15 @@ See `examples/sample.bib` for an example BibTeX file with various citation types
 
 The tool:
 - Parses BibTeX files to extract citation metadata
-- Performs web searches to verify paper existence
+- Performs web searches across multiple sources to verify paper existence:
+  - arXiv for papers with arXiv IDs
+  - Semantic Scholar API for academic papers
+  - Google Scholar for scholarly articles
+  - DuckDuckGo for general web search
 - Validates URLs by making HTTP requests
-- Extracts and compares metadata from online sources
+- Extracts and compares both title AND author metadata from online sources
+- Uses word-overlap similarity for title matching
+- Compares author last names to detect author list mismatches
 - Identifies different versions (preprints vs. published)
 - Provides a clear report of verification results
 
