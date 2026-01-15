@@ -178,7 +178,9 @@ class CitationVerifier:
         title = entry.get('title', '').strip('{}').lower()
         
         try:
-            if 'arxiv.org' in search_url:
+            # Properly check if URL is from arxiv.org domain
+            parsed_url = urlparse(search_url)
+            if parsed_url.netloc == 'arxiv.org' or parsed_url.netloc.endswith('.arxiv.org'):
                 response = self.session.get(search_url, timeout=self.timeout)
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, 'html.parser')
