@@ -267,7 +267,7 @@ class CitationVerifier:
                     return self._format_metadata_result(title_match, author_match)
             
             # Check Semantic Scholar metadata
-            elif 'semanticscholar.org' in search_url:
+            elif parsed_url.netloc == 'www.semanticscholar.org' or parsed_url.netloc == 'semanticscholar.org':
                 # Extract paper ID from URL
                 paper_id_match = re.search(r'/paper/([a-f0-9]+)', search_url)
                 if paper_id_match:
