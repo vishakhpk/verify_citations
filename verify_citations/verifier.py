@@ -382,9 +382,10 @@ class CitationVerifier:
             
             # Clean up any remaining punctuation and special characters
             last_name = re.sub(r'[^\w\s-]', '', last_name)
-            # Remove common LaTeX formatting
-            last_name = last_name.replace('l}ukasz', 'lukasz')
-            last_name = last_name.replace('\\', '')
+            # Remove common LaTeX formatting patterns
+            last_name = re.sub(r'\\[a-z]', '', last_name)  # Remove LaTeX commands like \L
+            last_name = re.sub(r'[{}]', '', last_name)  # Remove braces
+            last_name = last_name.strip()
             
             if last_name and len(last_name) > 1:
                 last_names.append(last_name)

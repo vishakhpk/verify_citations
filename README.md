@@ -99,7 +99,6 @@ When there are critical errors (shown in red):
     ✗ Could not find paper online
     ✗ URL returns 404 (not found)
 ```
-```
 
 Summary:
 ```
