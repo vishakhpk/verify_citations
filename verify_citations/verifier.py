@@ -359,8 +359,38 @@ class CitationVerifier:
         Returns:
             List of author last names in lowercase
         """
-        # Split by "and" first to separate authors
-        authors = re.split(r'\s+and\s+', author_string.lower())
+        author_string_lower = author_string.lower()
+        
+        # Determine separator: "and" for BibTeX, comma for online formats
+        # Check if we have "and" separators (BibTeX style)
+        if ' and ' in author_string_lower:
+            authors = re.split(r'\s+and\s+', author_string_lower)
+        else:
+            # Assume comma-separated format (online style)
+            # But need to distinguish from "Last, First" commas
+            # Strategy: split by comma, then check if each part looks like "First Last"
+            parts = author_string_lower.split(',')
+            authors = []
+            i = 0
+            while i < len(parts):
+                part = parts[i].strip()
+                # Check if this looks like a first name (single word or ends with period)
+                # and the next part exists (would be the last name)
+                if i + 1 < len(parts):
+                    next_part = parts[i + 1].strip()
+                    # If next part has multiple words, it's likely "First Last" format
+                    # not "Last, First" format
+                    if len(next_part.split()) >= 2:
+                        # This part is complete author name
+                        authors.append(part)
+                        i += 1
+                    else:
+                        # This is "Last, First" format - combine them
+                        authors.append(f"{part}, {next_part}")
+                        i += 2
+                else:
+                    authors.append(part)
+                    i += 1
         
         # Extract last names
         last_names = []

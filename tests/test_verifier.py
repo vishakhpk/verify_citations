@@ -193,5 +193,26 @@ def test_author_similarity_with_format_differences():
     assert similarity >= 0.5, f"Similarity {similarity} should be >= 0.5 for same authors"
 
 
+def test_author_extraction_comma_separated():
+    """Test author extraction with comma-separated format."""
+    verifier = CitationVerifier()
+    
+    # Online format: comma-separated "First Last, First Last"
+    online_authors = "Jacob Devlin, Ming-Wei Chang, Kenton Lee, Kristina Toutanova"
+    online_names = verifier._extract_author_names(online_authors)
+    
+    assert 'devlin' in online_names
+    assert 'chang' in online_names
+    assert 'lee' in online_names
+    assert 'toutanova' in online_names
+    assert len(online_names) == 4
+    
+    # BibTeX format: "Last, First and Last, First"
+    bibtex_authors = "Devlin, Jacob and Chang, Ming-Wei and Lee, Kenton and Toutanova, Kristina"
+    bibtex_names = verifier._extract_author_names(bibtex_authors)
+    
+    assert bibtex_names == online_names, "Should extract same names from both formats"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
