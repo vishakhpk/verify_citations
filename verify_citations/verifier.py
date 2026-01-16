@@ -52,6 +52,7 @@ class CitationVerifier:
                 'version_info': None,
             },
             'messages': [],
+            'verbose_logs': [],  # Add verbose logging details
             'status': 'pending',
             'metadata_details': None  # Store detailed metadata comparison
         }
@@ -76,11 +77,13 @@ class CitationVerifier:
 
         # Check 3: Metadata verification (title/authors from search)
         if findable and search_url:
-            metadata_correct, metadata_msg, metadata_details = self._check_metadata(entry, search_url)
+            metadata_correct, metadata_msg, metadata_details, verbose_logs = self._check_metadata(entry, search_url)
             result['checks']['metadata_correct'] = metadata_correct
             result['messages'].append(metadata_msg)
             if metadata_details:
                 result['metadata_details'] = metadata_details
+            if verbose_logs:
+                result['verbose_logs'].extend(verbose_logs)
 
         # Check 4: Version information (arXiv, published, etc.)
         version_info = self._check_version_info(entry)
@@ -227,15 +230,16 @@ class CitationVerifier:
         except requests.exceptions.RequestException as e:
             return False, f"✗ URL error: {str(e)}"
 
-    def _check_metadata(self, entry: Dict, search_url: str) -> Tuple[Optional[bool], str, Optional[Dict]]:
+    def _check_metadata(self, entry: Dict, search_url: str) -> Tuple[Optional[bool], str, Optional[Dict], List[str]]:
         """
         Check if metadata (title, authors) matches what's found online.
         
         Returns:
-            Tuple of (correct, message, details_dict)
+            Tuple of (correct, message, details_dict, verbose_logs)
         """
         title = entry.get('title', '').strip('{}').lower()
         entry_authors = entry.get('author', '').strip('{}')
+        verbose_logs = []
         
         try:
             # Properly check if URL is from arxiv.org domain
@@ -252,8 +256,16 @@ class CitationVerifier:
                     if page_title:
                         online_title_original = page_title.get_text().replace('Title:', '').strip()
                         online_title = online_title_original.lower()
+                        
+                        verbose_logs.append(f"  Comparing titles:")
+                        verbose_logs.append(f"    BibTeX: {entry.get('title', '').strip('{}')}")
+                        verbose_logs.append(f"    Online: {online_title_original}")
+                        
                         title_similarity = self._calculate_title_similarity(title, online_title)
                         title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
+                        
+                        verbose_logs.append(f"    Similarity: {title_similarity:.2%}, Threshold: {self.METADATA_SIMILARITY_THRESHOLD:.2%}")
+                        verbose_logs.append(f"    Result: {'✓ Match' if title_match else '✗ Mismatch'}")
                     
                     # Check authors
                     authors_div = soup.find('div', class_='authors')
@@ -262,22 +274,49 @@ class CitationVerifier:
                     if authors_div and entry_authors:
                         online_authors_original = authors_div.get_text().replace('Authors:', '').strip()
                         online_authors = online_authors_original.lower()
+                        
+                        verbose_logs.append(f"  Comparing authors:")
+                        verbose_logs.append(f"    BibTeX: {entry_authors}")
+                        verbose_logs.append(f"    Online: {online_authors_original}")
+                        
                         # Extract author last names for comparison
                         entry_author_names = self._extract_author_names(entry_authors)
                         online_author_names = self._extract_author_names(online_authors)
+                        
+                        verbose_logs.append(f"    Extracted BibTeX authors ({len(entry_author_names)}): {', '.join(entry_author_names)}")
+                        verbose_logs.append(f"    Extracted online authors ({len(online_author_names)}): {', '.join(online_author_names)}")
                         
                         # Check if entry has "and others"
                         has_et_al = 'and others' in entry_authors.lower() or 'et al' in entry_authors.lower()
                         
                         if entry_author_names and online_author_names:
                             if has_et_al:
-                                # For "and others", check if all listed authors are in online list
-                                # This is a subset check rather than full match
-                                matching = sum(1 for name in entry_author_names if name in online_author_names)
-                                author_similarity = matching / len(entry_author_names) if entry_author_names else 0
+                                verbose_logs.append(f"    Note: BibTeX has 'and others' - checking if listed authors are complete")
+                                # For "and others", we need ALL authors to match in same order
+                                # First check if listed authors are a proper prefix
+                                if len(entry_author_names) > len(online_author_names):
+                                    author_similarity = 0.0  # Can't match if BibTeX has more than online
+                                    verbose_logs.append(f"    ✗ BibTeX has more authors than online ({len(entry_author_names)} > {len(online_author_names)})")
+                                else:
+                                    # Check if all listed authors appear in online list
+                                    matching = sum(1 for name in entry_author_names if name in online_author_names)
+                                    verbose_logs.append(f"    Matching authors: {matching}/{len(entry_author_names)}")
+                                    # But we need to be strict: if not all authors match, it's incomplete
+                                    if matching == len(entry_author_names):
+                                        # All listed authors found, but check if it's significantly incomplete
+                                        coverage = len(entry_author_names) / len(online_author_names)
+                                        verbose_logs.append(f"    Coverage: {coverage:.2%} of total authors")
+                                        # If less than 50% of authors are listed, flag as issue
+                                        author_similarity = coverage
+                                    else:
+                                        author_similarity = 0.0
+                                        verbose_logs.append(f"    ✗ Not all listed authors found online")
                             else:
                                 author_similarity = self._calculate_author_similarity(entry_author_names, online_author_names)
+                                verbose_logs.append(f"    Similarity: {author_similarity:.2%}, Threshold: 50%")
+                            
                             author_match = author_similarity >= 0.5  # At least 50% of authors should match
+                            verbose_logs.append(f"    Result: {'✓ Match' if author_match else '✗ Mismatch'}")
                     
                     # Build details dictionary
                     details = {
@@ -293,7 +332,7 @@ class CitationVerifier:
                     # Format and return result
                     result, message = self._format_metadata_result(title_match, author_match, details)
                     # Only include details when there's a mismatch
-                    return result, message, (None if result else details)
+                    return result, message, (None if result else details), verbose_logs
             
             # Check Semantic Scholar metadata
             elif parsed_url.netloc == 'www.semanticscholar.org' or parsed_url.netloc == 'semanticscholar.org':
@@ -339,9 +378,16 @@ class CitationVerifier:
                             
                             if entry_author_names and online_last_names:
                                 if has_et_al:
-                                    # For "and others", check if all listed authors are in online list
-                                    matching = sum(1 for name in entry_author_names if name in online_last_names)
-                                    author_similarity = matching / len(entry_author_names) if entry_author_names else 0
+                                    # For "and others", we need ALL authors to match
+                                    if len(entry_author_names) > len(online_last_names):
+                                        author_similarity = 0.0
+                                    else:
+                                        matching = sum(1 for name in entry_author_names if name in online_last_names)
+                                        if matching == len(entry_author_names):
+                                            coverage = len(entry_author_names) / len(online_last_names)
+                                            author_similarity = coverage
+                                        else:
+                                            author_similarity = 0.0
                                 else:
                                     author_similarity = self._calculate_author_similarity(entry_author_names, online_last_names)
                                 author_match = author_similarity >= 0.5
@@ -360,11 +406,11 @@ class CitationVerifier:
                         # Format and return result
                         result, message = self._format_metadata_result(title_match, author_match, details)
                         # Only include details when there's a mismatch
-                        return result, message, (None if result else details)
+                        return result, message, (None if result else details), verbose_logs
         except Exception as e:
             pass
 
-        return None, "- Could not verify metadata automatically", None
+        return None, "- Could not verify metadata automatically", None, []
     
     def _extract_author_names(self, author_string: str) -> List[str]:
         """

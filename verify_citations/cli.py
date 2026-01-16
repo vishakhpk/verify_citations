@@ -90,6 +90,11 @@ def _print_result(result: dict, verbose: bool):
     
     click.echo(f"  Status: {status_msg}")
     
+    # Print verbose logs if in verbose mode
+    if verbose and result.get('verbose_logs'):
+        for log in result['verbose_logs']:
+            click.echo(f"  {Fore.CYAN}{log}{Style.RESET_ALL}")
+    
     # Print messages
     if verbose or result['status'] != 'verified':
         for msg in result['messages']:
