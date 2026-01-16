@@ -292,8 +292,8 @@ class CitationVerifier:
                         if entry_author_names and online_author_names:
                             if has_et_al:
                                 verbose_logs.append(f"    Note: BibTeX has 'and others' - checking if listed authors are complete")
-                                # For "and others", we need ALL authors to match in same order
-                                # First check if listed authors are a proper prefix
+                                # For "and others", check if all listed authors appear in online list
+                                # and if coverage is sufficient (50%+)
                                 if len(entry_author_names) > len(online_author_names):
                                     author_similarity = 0.0  # Can't match if BibTeX has more than online
                                     verbose_logs.append(f"    ✗ BibTeX has more authors than online ({len(entry_author_names)} > {len(online_author_names)})")
