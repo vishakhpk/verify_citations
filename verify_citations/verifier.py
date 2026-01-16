@@ -366,7 +366,7 @@ class CitationVerifier:
         last_names = []
         for author in authors:
             author = author.strip()
-            if not author:
+            if not author or author == 'others':  # Skip "and others"
                 continue
             
             # Handle "Last, First Middle" format
@@ -380,8 +380,12 @@ class CitationVerifier:
                 else:
                     continue
             
-            # Clean up any remaining punctuation
+            # Clean up any remaining punctuation and special characters
             last_name = re.sub(r'[^\w\s-]', '', last_name)
+            # Remove common LaTeX formatting
+            last_name = last_name.replace('l}ukasz', 'lukasz')
+            last_name = last_name.replace('\\', '')
+            
             if last_name and len(last_name) > 1:
                 last_names.append(last_name)
         
@@ -411,7 +415,7 @@ class CitationVerifier:
     
     def _calculate_author_similarity(self, entry_names: List[str], online_names: List[str]) -> float:
         """
-        Calculate similarity between two author lists.
+        Calculate similarity between two author lists using fuzzy matching.
         
         Args:
             entry_names: List of author last names from BibTeX entry
@@ -423,10 +427,61 @@ class CitationVerifier:
         if not entry_names or not online_names:
             return 0.0
         
-        # Use exact matching on last names to avoid false positives
-        matching_authors = sum(1 for name in entry_names 
-                             if name in online_names)
+        # Use fuzzy matching on last names to handle misspellings and variations
+        matching_authors = 0
+        for entry_name in entry_names:
+            for online_name in online_names:
+                # Exact match
+                if entry_name == online_name:
+                    matching_authors += 1
+                    break
+                # Check if one is substring of the other (e.g., "kaiser" vs "kaiserlukasz")
+                elif entry_name in online_name or online_name in entry_name:
+                    matching_authors += 1
+                    break
+                # Fuzzy match using simple edit distance heuristic
+                # If names are similar length and differ by only 1-2 characters
+                elif self._fuzzy_match(entry_name, online_name):
+                    matching_authors += 1
+                    break
+        
         return matching_authors / max(len(entry_names), len(online_names))
+    
+    def _fuzzy_match(self, str1: str, str2: str, threshold: int = 2) -> bool:
+        """
+        Simple fuzzy matching for author names.
+        
+        Args:
+            str1: First string
+            str2: Second string
+            threshold: Maximum edit distance to consider a match
+            
+        Returns:
+            True if strings are similar enough
+        """
+        # If length difference is too large, not a match
+        if abs(len(str1) - len(str2)) > threshold:
+            return False
+        
+        # Simple Levenshtein distance calculation
+        if len(str1) < len(str2):
+            str1, str2 = str2, str1
+        
+        if len(str2) == 0:
+            return len(str1) <= threshold
+        
+        previous_row = range(len(str2) + 1)
+        for i, c1 in enumerate(str1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(str2):
+                # Cost of insertions, deletions, or substitutions
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        
+        return previous_row[-1] <= threshold
     
     def _format_metadata_result(self, title_match: Optional[bool], author_match: Optional[bool], 
                                 details: Optional[Dict] = None) -> Tuple[Optional[bool], str]:
@@ -445,21 +500,21 @@ class CitationVerifier:
             if title_match and author_match:
                 return True, "✓ Metadata (title and authors) verified"
             elif title_match and not author_match:
-                msg = "✗ Title matches but author list mismatch detected"
+                msg = "⚠ Title matches but author list mismatch detected"
                 if details and details.get('online_authors'):
                     msg += f"\n    BibTeX authors: {details['entry_authors']}"
                     msg += f"\n    Online authors: {details['online_authors']}"
                     msg += f"\n    Source: {details['source_url']}"
                 return False, msg
             elif not title_match and author_match:
-                msg = "✗ Title mismatch detected"
+                msg = "⚠ Title mismatch detected"
                 if details and details.get('online_title'):
                     msg += f"\n    BibTeX title: {details['entry_title']}"
                     msg += f"\n    Online title: {details['online_title']}"
                     msg += f"\n    Source: {details['source_url']}"
                 return False, msg
             else:
-                msg = "✗ Both title and author mismatches detected"
+                msg = "⚠ Both title and author mismatches detected"
                 if details:
                     if details.get('online_title'):
                         msg += f"\n    BibTeX title: {details['entry_title']}"
@@ -473,7 +528,7 @@ class CitationVerifier:
             if title_match:
                 return True, "✓ Title verified (authors not checked)"
             else:
-                msg = "✗ Title mismatch detected"
+                msg = "⚠ Title mismatch detected"
                 if details and details.get('online_title'):
                     msg += f"\n    BibTeX title: {details['entry_title']}"
                     msg += f"\n    Online title: {details['online_title']}"

@@ -140,6 +140,57 @@ def test_extract_author_names():
     assert 'smith' in names
     assert 'doe' in names
     assert 'brown' in names
+    
+    # Test with "and others"
+    authors = "Smith, John and Doe, Jane and others"
+    names = verifier._extract_author_names(authors)
+    assert 'smith' in names
+    assert 'doe' in names
+    assert 'others' not in names
+    
+    # Test LaTeX special characters
+    authors = r"Kaiser, {\L}ukasz"
+    names = verifier._extract_author_names(authors)
+    assert 'kaiser' in names
+
+
+def test_fuzzy_author_matching():
+    """Test fuzzy matching for author names."""
+    verifier = CitationVerifier()
+    
+    # Test exact match
+    assert verifier._fuzzy_match('smith', 'smith') is True
+    
+    # Test small typo (1 character difference)
+    assert verifier._fuzzy_match('smith', 'smoth') is True
+    
+    # Test 2 character difference
+    assert verifier._fuzzy_match('johnson', 'jonson') is True
+    
+    # Test too different
+    assert verifier._fuzzy_match('smith', 'jones') is False
+    
+    # Test length difference
+    assert verifier._fuzzy_match('ab', 'abcde') is False
+
+
+def test_author_similarity_with_format_differences():
+    """Test that author similarity handles name format differences."""
+    verifier = CitationVerifier()
+    
+    # Same authors, different format
+    # BibTeX: "Last, First" format
+    bibtex_authors = "Vaswani, Ashish and Shazeer, Noam"
+    # Online: "First Last" format  
+    online_authors = "Ashish Vaswani and Noam Shazeer"
+    
+    bibtex_names = verifier._extract_author_names(bibtex_authors)
+    online_names = verifier._extract_author_names(online_authors)
+    
+    similarity = verifier._calculate_author_similarity(bibtex_names, online_names)
+    
+    # Should match since it's the same authors
+    assert similarity >= 0.5, f"Similarity {similarity} should be >= 0.5 for same authors"
 
 
 if __name__ == '__main__':

@@ -97,7 +97,11 @@ def _print_result(result: dict, verbose: bool):
             if msg.startswith('✓'):
                 colored_msg = f"{Fore.GREEN}{msg}{Style.RESET_ALL}"
             elif msg.startswith('✗'):
+                # Red for critical errors (URL invalid, paper not found)
                 colored_msg = f"{Fore.RED}{msg}{Style.RESET_ALL}"
+            elif msg.startswith('⚠'):
+                # Yellow for warnings (metadata mismatches)
+                colored_msg = f"{Fore.YELLOW}{msg}{Style.RESET_ALL}"
             elif msg.startswith('ℹ'):
                 colored_msg = f"{Fore.CYAN}{msg}{Style.RESET_ALL}"
             else:

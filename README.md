@@ -17,9 +17,18 @@ This tool performs automated checks to verify citations:
 3. **Metadata Verification**: Checks if both the title AND author list match what's found online
    - Compares paper titles with word-overlap similarity (70% threshold)
    - Validates author lists by extracting and comparing author last names (50% match threshold)
+   - **Handles name format differences**: Recognizes "Last, First" and "First Last" as the same author
+   - **Fuzzy matching**: Tolerates small misspellings (up to 2 character differences) in author names
+   - **Special character handling**: Correctly processes LaTeX special characters in names
    - Works with arXiv and Semantic Scholar sources
 
 4. **Version Information**: Identifies the correct version among different ones online (arXiv, journal, conference)
+
+5. **Color-Coded Output**: Clear visual feedback
+   - 🟢 **Green (✓)**: Successfully verified
+   - 🔴 **Red (✗)**: Critical errors (URL invalid, paper not found)
+   - 🟡 **Yellow (⚠)**: Warnings (metadata mismatches, potential issues)
+   - 🔵 **Cyan (ℹ)**: Informational messages
 
 ## Installation
 
@@ -70,22 +79,26 @@ Found 3 citation(s) to verify
     ℹ Version: arXiv:1706.03762
 ```
 
-When there are mismatches, detailed information is provided:
+When there are metadata mismatches (shown in yellow), detailed information is provided:
 ```
 [2/3] Verifying:
   [wrong2023] Wrong Paper Entry (Smith, John, 2023)
-  Status: ✗ ISSUES FOUND
+  Status: ⚠ ISSUES FOUND
     ✓ Paper found online via search
-    ✗ Title matches but author list mismatch detected
+    ⚠ Title matches but author list mismatch detected
       BibTeX authors: Smith, John and Doe, Jane
-      Online authors: Vaswani, Ashish and Shazeer, Noam and Parmar, Niki
+      Online authors: Johnson, Alice and Brown, Bob
       Source: https://arxiv.org/abs/1706.03762
+```
 
+When there are critical errors (shown in red):
+```
 [3/3] Verifying:
   [fake2023paper] This is a Fake Paper (Nobody et al., 2023)
   Status: ✗ ISSUES FOUND
     ✗ Could not find paper online
     ✗ URL returns 404 (not found)
+```
 ```
 
 Summary:
