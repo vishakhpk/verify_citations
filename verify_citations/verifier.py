@@ -266,8 +266,17 @@ class CitationVerifier:
                         entry_author_names = self._extract_author_names(entry_authors)
                         online_author_names = self._extract_author_names(online_authors)
                         
+                        # Check if entry has "and others"
+                        has_et_al = 'and others' in entry_authors.lower() or 'et al' in entry_authors.lower()
+                        
                         if entry_author_names and online_author_names:
-                            author_similarity = self._calculate_author_similarity(entry_author_names, online_author_names)
+                            if has_et_al:
+                                # For "and others", check if all listed authors are in online list
+                                # This is a subset check rather than full match
+                                matching = sum(1 for name in entry_author_names if name in online_author_names)
+                                author_similarity = matching / len(entry_author_names)
+                            else:
+                                author_similarity = self._calculate_author_similarity(entry_author_names, online_author_names)
                             author_match = author_similarity >= 0.5  # At least 50% of authors should match
                     
                     # Build details dictionary
@@ -325,8 +334,16 @@ class CitationVerifier:
                             
                             entry_author_names = self._extract_author_names(entry_authors)
                             
+                            # Check if entry has "and others"
+                            has_et_al = 'and others' in entry_authors.lower() or 'et al' in entry_authors.lower()
+                            
                             if entry_author_names and online_last_names:
-                                author_similarity = self._calculate_author_similarity(entry_author_names, online_last_names)
+                                if has_et_al:
+                                    # For "and others", check if all listed authors are in online list
+                                    matching = sum(1 for name in entry_author_names if name in online_last_names)
+                                    author_similarity = matching / len(entry_author_names)
+                                else:
+                                    author_similarity = self._calculate_author_similarity(entry_author_names, online_last_names)
                                 author_match = author_similarity >= 0.5
                         
                         # Build details dictionary
