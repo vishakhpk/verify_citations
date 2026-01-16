@@ -142,7 +142,7 @@ def _print_summary(results: list):
     
     # Show citations with 403 errors separately
     if citations_with_403:
-        click.echo(f"\n{Fore.YELLOW}Citations where you should manually check the links due to a 403 error{Style.RESET_ALL}")
+        click.echo(f"\n{Fore.YELLOW}Citations where you should manually check the links due to a 403 error:{Style.RESET_ALL}")
         for result in citations_with_403:
             click.echo(f"- {result['id']}: {result['title']}")
 

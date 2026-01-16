@@ -73,7 +73,7 @@ class CitationVerifier:
             url_valid, url_msg = self._check_url_valid(url)
             result['checks']['url_valid'] = url_valid
             result['messages'].append(url_msg)
-            # Set has_403 flag if url_valid is None (403 error)
+            # Track 403 errors: _check_url_valid returns None specifically for 403 Forbidden responses
             if url_valid is None:
                 result['has_403'] = True
         else:
