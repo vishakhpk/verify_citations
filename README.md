@@ -53,6 +53,7 @@ verify-citations references.bib --timeout 20     # Set request timeout
 
 ### Example Output
 
+When citations are verified successfully:
 ```
 === Citation Verification Tool ===
 
@@ -65,21 +66,41 @@ Found 3 citation(s) to verify
   Status: ✓ VERIFIED
     ✓ Paper found online via search
     ✓ URL is valid and accessible
+    ✓ Metadata (title and authors) verified
     ℹ Version: arXiv:1706.03762
+```
 
+When there are mismatches, detailed information is provided:
+```
 [2/3] Verifying:
+  [wrong2023] Wrong Paper Entry (Smith, John, 2023)
+  Status: ✗ ISSUES FOUND
+    ✓ Paper found online via search
+    ✗ Title matches but author list mismatch detected
+      BibTeX authors: Smith, John and Doe, Jane
+      Online authors: Vaswani, Ashish and Shazeer, Noam and Parmar, Niki
+      Source: https://arxiv.org/abs/1706.03762
+
+[3/3] Verifying:
   [fake2023paper] This is a Fake Paper (Nobody et al., 2023)
   Status: ✗ ISSUES FOUND
     ✗ Could not find paper online
     ✗ URL returns 404 (not found)
+```
 
+Summary:
+```
 ============================================================
 SUMMARY
 
 Total citations: 3
-Verified: 2
-Issues found: 1
+Verified: 1
+Issues found: 2
 Incomplete: 0
+
+Citations with issues:
+  - wrong2023: Wrong Paper Entry
+  - fake2023paper: This is a Fake Paper
 ```
 
 ## Example BibTeX File

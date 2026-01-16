@@ -52,7 +52,8 @@ class CitationVerifier:
                 'version_info': None,
             },
             'messages': [],
-            'status': 'pending'
+            'status': 'pending',
+            'metadata_details': None  # Store detailed metadata comparison
         }
 
         # Check 1: Can the paper be found online?
@@ -75,9 +76,11 @@ class CitationVerifier:
 
         # Check 3: Metadata verification (title/authors from search)
         if findable and search_url:
-            metadata_correct, metadata_msg = self._check_metadata(entry, search_url)
+            metadata_correct, metadata_msg, metadata_details = self._check_metadata(entry, search_url)
             result['checks']['metadata_correct'] = metadata_correct
             result['messages'].append(metadata_msg)
+            if metadata_details:
+                result['metadata_details'] = metadata_details
 
         # Check 4: Version information (arXiv, published, etc.)
         version_info = self._check_version_info(entry)
@@ -224,12 +227,12 @@ class CitationVerifier:
         except requests.exceptions.RequestException as e:
             return False, f"✗ URL error: {str(e)}"
 
-    def _check_metadata(self, entry: Dict, search_url: str) -> Tuple[Optional[bool], str]:
+    def _check_metadata(self, entry: Dict, search_url: str) -> Tuple[Optional[bool], str, Optional[Dict]]:
         """
         Check if metadata (title, authors) matches what's found online.
         
         Returns:
-            Tuple of (correct, message)
+            Tuple of (correct, message, details_dict)
         """
         title = entry.get('title', '').strip('{}').lower()
         entry_authors = entry.get('author', '').strip('{}')
@@ -245,16 +248,20 @@ class CitationVerifier:
                     # Check title
                     page_title = soup.find('h1', class_='title')
                     title_match = None
+                    online_title_original = None
                     if page_title:
-                        online_title = page_title.get_text().replace('Title:', '').strip().lower()
+                        online_title_original = page_title.get_text().replace('Title:', '').strip()
+                        online_title = online_title_original.lower()
                         title_similarity = self._calculate_title_similarity(title, online_title)
                         title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
                     
                     # Check authors
                     authors_div = soup.find('div', class_='authors')
                     author_match = None
+                    online_authors_original = None
                     if authors_div and entry_authors:
-                        online_authors = authors_div.get_text().replace('Authors:', '').strip().lower()
+                        online_authors_original = authors_div.get_text().replace('Authors:', '').strip()
+                        online_authors = online_authors_original.lower()
                         # Extract author last names for comparison
                         entry_author_names = self._extract_author_names(entry_authors)
                         online_author_names = self._extract_author_names(online_authors)
@@ -263,8 +270,20 @@ class CitationVerifier:
                             author_similarity = self._calculate_author_similarity(entry_author_names, online_author_names)
                             author_match = author_similarity >= 0.5  # At least 50% of authors should match
                     
+                    # Build details dictionary
+                    details = {
+                        'entry_title': entry.get('title', '').strip('{}'),
+                        'online_title': online_title_original,
+                        'entry_authors': entry_authors,
+                        'online_authors': online_authors_original,
+                        'source_url': search_url,
+                        'title_match': title_match,
+                        'author_match': author_match
+                    }
+                    
                     # Format and return result
-                    return self._format_metadata_result(title_match, author_match)
+                    result, message = self._format_metadata_result(title_match, author_match, details)
+                    return result, message, details if not result else None
             
             # Check Semantic Scholar metadata
             elif parsed_url.netloc == 'www.semanticscholar.org' or parsed_url.netloc == 'semanticscholar.org':
@@ -278,7 +297,8 @@ class CitationVerifier:
                     response = self.session.get(api_url, params=params, timeout=self.timeout)
                     if response.status_code == 200:
                         data = response.json()
-                        online_title = data.get('title', '').lower()
+                        online_title_original = data.get('title', '')
+                        online_title = online_title_original.lower()
                         online_authors = data.get('authors', [])
                         
                         # Check title
@@ -289,9 +309,12 @@ class CitationVerifier:
                         
                         # Check authors
                         author_match = None
+                        online_authors_str = None
                         if online_authors and entry_authors:
                             online_author_names = [author.get('name', '').lower() 
                                                   for author in online_authors]
+                            online_authors_str = ', '.join([author.get('name', '') for author in online_authors])
+                            
                             # Extract last names from online authors
                             online_last_names = []
                             for name in online_author_names:
@@ -305,12 +328,24 @@ class CitationVerifier:
                                 author_similarity = self._calculate_author_similarity(entry_author_names, online_last_names)
                                 author_match = author_similarity >= 0.5
                         
+                        # Build details dictionary
+                        details = {
+                            'entry_title': entry.get('title', '').strip('{}'),
+                            'online_title': online_title_original,
+                            'entry_authors': entry_authors,
+                            'online_authors': online_authors_str,
+                            'source_url': search_url,
+                            'title_match': title_match,
+                            'author_match': author_match
+                        }
+                        
                         # Format and return result
-                        return self._format_metadata_result(title_match, author_match)
+                        result, message = self._format_metadata_result(title_match, author_match, details)
+                        return result, message, details if not result else None
         except Exception as e:
             pass
 
-        return None, "- Could not verify metadata automatically"
+        return None, "- Could not verify metadata automatically", None
     
     def _extract_author_names(self, author_string: str) -> List[str]:
         """
@@ -391,13 +426,15 @@ class CitationVerifier:
                              if name in online_names)
         return matching_authors / max(len(entry_names), len(online_names))
     
-    def _format_metadata_result(self, title_match: Optional[bool], author_match: Optional[bool]) -> Tuple[Optional[bool], str]:
+    def _format_metadata_result(self, title_match: Optional[bool], author_match: Optional[bool], 
+                                details: Optional[Dict] = None) -> Tuple[Optional[bool], str]:
         """
         Format metadata verification result based on title and author matches.
         
         Args:
             title_match: Whether title matches (True/False/None)
             author_match: Whether authors match (True/False/None)
+            details: Dictionary with detailed comparison information
             
         Returns:
             Tuple of (overall_match, message)
@@ -406,16 +443,40 @@ class CitationVerifier:
             if title_match and author_match:
                 return True, "✓ Metadata (title and authors) verified"
             elif title_match and not author_match:
-                return False, "✗ Title matches but author list mismatch detected"
+                msg = "✗ Title matches but author list mismatch detected"
+                if details and details.get('online_authors'):
+                    msg += f"\n    BibTeX authors: {details['entry_authors']}"
+                    msg += f"\n    Online authors: {details['online_authors']}"
+                    msg += f"\n    Source: {details['source_url']}"
+                return False, msg
             elif not title_match and author_match:
-                return False, "✗ Title mismatch detected"
+                msg = "✗ Title mismatch detected"
+                if details and details.get('online_title'):
+                    msg += f"\n    BibTeX title: {details['entry_title']}"
+                    msg += f"\n    Online title: {details['online_title']}"
+                    msg += f"\n    Source: {details['source_url']}"
+                return False, msg
             else:
-                return False, "✗ Both title and author mismatches detected"
+                msg = "✗ Both title and author mismatches detected"
+                if details:
+                    if details.get('online_title'):
+                        msg += f"\n    BibTeX title: {details['entry_title']}"
+                        msg += f"\n    Online title: {details['online_title']}"
+                    if details.get('online_authors'):
+                        msg += f"\n    BibTeX authors: {details['entry_authors']}"
+                        msg += f"\n    Online authors: {details['online_authors']}"
+                    msg += f"\n    Source: {details['source_url']}"
+                return False, msg
         elif title_match is not None:
             if title_match:
                 return True, "✓ Title verified (authors not checked)"
             else:
-                return False, "✗ Title mismatch detected"
+                msg = "✗ Title mismatch detected"
+                if details and details.get('online_title'):
+                    msg += f"\n    BibTeX title: {details['entry_title']}"
+                    msg += f"\n    Online title: {details['online_title']}"
+                    msg += f"\n    Source: {details['source_url']}"
+                return False, msg
         
         return None, "- Could not verify metadata automatically"
 
