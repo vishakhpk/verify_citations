@@ -229,7 +229,7 @@ class CitationVerifier:
                     response = self.session.get(url, timeout=self.timeout)
                     if response.status_code == 200:
                         return True, f"✓ URL is accessible (server restricts HEAD requests): {url}"
-                except:
+                except requests.exceptions.RequestException:
                     pass
                 return None, f"⚠ URL returns 403 (Forbidden - server blocks automated access): {url}"
             elif response.status_code == 404:
