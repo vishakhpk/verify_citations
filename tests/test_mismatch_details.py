@@ -2,6 +2,8 @@
 Test for detailed mismatch reporting.
 """
 
+import pytest
+
 from verify_citations.verifier import CitationVerifier
 
 
@@ -90,5 +92,4 @@ def test_verify_citation_includes_metadata_details():
 
 
 if __name__ == '__main__':
-    import pytest
     pytest.main([__file__, '-v'])

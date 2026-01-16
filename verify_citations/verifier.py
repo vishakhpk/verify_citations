@@ -283,7 +283,8 @@ class CitationVerifier:
                     
                     # Format and return result
                     result, message = self._format_metadata_result(title_match, author_match, details)
-                    return result, message, details if not result else None
+                    # Only include details when there's a mismatch
+                    return result, message, (None if result else details)
             
             # Check Semantic Scholar metadata
             elif parsed_url.netloc == 'www.semanticscholar.org' or parsed_url.netloc == 'semanticscholar.org':
@@ -341,7 +342,8 @@ class CitationVerifier:
                         
                         # Format and return result
                         result, message = self._format_metadata_result(title_match, author_match, details)
-                        return result, message, details if not result else None
+                        # Only include details when there's a mismatch
+                        return result, message, (None if result else details)
         except Exception as e:
             pass
 
