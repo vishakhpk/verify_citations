@@ -61,7 +61,7 @@ class CitationVerifier:
         findable, search_url = self._check_findable_online(entry)
         result['checks']['findable_online'] = findable
         if findable:
-            result['messages'].append(f"✓ Paper found online via search")
+            result['messages'].append(f"✓ Paper found online via search: {search_url}")
             result['search_url'] = search_url
         else:
             result['messages'].append(f"✗ Could not find paper online")
@@ -199,12 +199,15 @@ class CitationVerifier:
 
         return False, None
 
-    def _check_url_valid(self, url: str) -> Tuple[bool, str]:
+    def _check_url_valid(self, url: str) -> Tuple[Optional[bool], str]:
         """
         Check if provided URL is valid and accessible.
         
         Returns:
-            Tuple of (valid, message)
+            Tuple of (valid, message) where valid can be:
+            - True: URL is accessible
+            - False: URL has critical error (404, etc.)
+            - None: Warning state (403 - server blocking automated access)
         """
         try:
             # Handle arXiv eprint IDs - convert to full URL
@@ -219,6 +222,16 @@ class CitationVerifier:
             response = self.session.head(url, timeout=self.timeout, allow_redirects=True)
             if response.status_code == 200:
                 return True, f"✓ URL is valid and accessible: {url}"
+            elif response.status_code == 403:
+                # 403 Forbidden - server is blocking automated access
+                # Try GET as fallback, but note the restriction
+                try:
+                    response = self.session.get(url, timeout=self.timeout)
+                    if response.status_code == 200:
+                        return True, f"✓ URL is accessible (server restricts HEAD requests): {url}"
+                except:
+                    pass
+                return None, f"⚠ URL returns 403 (Forbidden - server blocks automated access): {url}"
             elif response.status_code == 404:
                 return False, f"✗ URL returns 404 (not found): {url}"
             else:
@@ -226,6 +239,8 @@ class CitationVerifier:
                 response = self.session.get(url, timeout=self.timeout)
                 if response.status_code == 200:
                     return True, f"✓ URL is valid and accessible: {url}"
+                elif response.status_code == 403:
+                    return None, f"⚠ URL returns 403 (Forbidden - server blocks automated access): {url}"
                 return False, f"✗ URL returned status {response.status_code}: {url}"
         except requests.exceptions.RequestException as e:
             return False, f"✗ URL error: {str(e)}"
