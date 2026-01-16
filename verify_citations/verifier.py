@@ -54,7 +54,8 @@ class CitationVerifier:
             'messages': [],
             'verbose_logs': [],  # Add verbose logging details
             'status': 'pending',
-            'metadata_details': None  # Store detailed metadata comparison
+            'metadata_details': None,  # Store detailed metadata comparison
+            'has_403': False  # Track if a 403 error occurred
         }
 
         # Check 1: Can the paper be found online?
@@ -72,6 +73,9 @@ class CitationVerifier:
             url_valid, url_msg = self._check_url_valid(url)
             result['checks']['url_valid'] = url_valid
             result['messages'].append(url_msg)
+            # Set has_403 flag if url_valid is None (403 error)
+            if url_valid is None:
+                result['has_403'] = True
         else:
             result['messages'].append("- No URL provided to verify")
 

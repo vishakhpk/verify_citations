@@ -123,8 +123,8 @@ def _print_summary(results: list):
     issues = sum(1 for r in results if r['status'] == 'issues_found')
     incomplete = sum(1 for r in results if r['status'] == 'incomplete')
     
-    # Count citations with 403 errors (url_valid is None)
-    has_403_errors = sum(1 for r in results if r['checks'].get('url_valid') is None)
+    # Count citations with actual 403 errors (where has_403 flag is True)
+    citations_with_403 = [r for r in results if r.get('has_403', False)]
     
     total = len(results)
     
@@ -133,15 +133,18 @@ def _print_summary(results: list):
     click.echo(f"{Fore.RED}Issues found: {issues}{Style.RESET_ALL}")
     click.echo(f"{Fore.YELLOW}Incomplete: {incomplete}{Style.RESET_ALL}")
     
-    if has_403_errors > 0:
-        click.echo(f"{Fore.YELLOW}Citations with 403 errors (server blocking): {has_403_errors}{Style.RESET_ALL}")
-    
+    # Show citations with issues (excluding those that only have 403 errors)
     if issues > 0:
         click.echo(f"\n{Fore.YELLOW}Citations with issues:{Style.RESET_ALL}")
-        click.echo(f"{Fore.YELLOW}Manually verify the links in these citations:{Style.RESET_ALL}")
         for result in results:
             if result['status'] == 'issues_found':
-                click.echo(f"  - {result['id']}: {result['title']}")
+                click.echo(f"- {result['id']}: {result['title']}")
+    
+    # Show citations with 403 errors separately
+    if citations_with_403:
+        click.echo(f"\n{Fore.YELLOW}Citations where you should manually check the links due to a 403 error{Style.RESET_ALL}")
+        for result in citations_with_403:
+            click.echo(f"- {result['id']}: {result['title']}")
 
 
 if __name__ == '__main__':
