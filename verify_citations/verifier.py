@@ -294,8 +294,8 @@ class CitationVerifier:
         Returns:
             Tuple of (valid, message) where valid can be:
             - True: URL is accessible
-            - False: URL has critical error (404, etc.)
-            - None: Warning state (403 - server blocking automated access)
+            - False: URL has critical error (404, invalid format, etc.)
+            - None: Warning/transient state (403 - server blocking, connection errors)
         """
         try:
             # Handle arXiv eprint IDs - convert to full URL
@@ -330,8 +330,15 @@ class CitationVerifier:
                 elif response.status_code == 403:
                     return None, f"⚠ URL returns 403 (Forbidden - server blocks automated access): {url}"
                 return False, f"✗ URL returned status {response.status_code}: {url}"
+        except requests.exceptions.ConnectionError as e:
+            # Connection errors are transient - treat as warning, not failure
+            return None, f"⚠ Connection error (may be transient): {str(e)}"
+        except requests.exceptions.Timeout:
+            # Timeout errors are transient - treat as warning, not failure
+            return None, f"⚠ Connection timeout (may be transient)"
         except requests.exceptions.RequestException as e:
-            return False, f"✗ URL error: {str(e)}"
+            # Other network errors - treat as warning since they may be transient
+            return None, f"⚠ Network error (may be transient): {str(e)}"
 
     def _check_metadata(self, entry: Dict, search_url: str) -> Tuple[Optional[bool], str, Optional[Dict], List[str]]:
         """
