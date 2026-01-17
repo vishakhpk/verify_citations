@@ -166,26 +166,6 @@ class CitationVerifier:
         except Exception:
             pass
 
-        # Try DBLP
-        try:
-            # DBLP API search
-            dblp_search_url = f"https://dblp.org/search/publ/api?q={quote_plus(title)}&format=json&h=1"
-            response = self.session.get(dblp_search_url, timeout=self.timeout)
-            
-            if response.status_code == 200:
-                data = response.json()
-                hits = data.get('result', {}).get('hits', {}).get('hit', [])
-                if hits:
-                    paper = hits[0].get('info', {})
-                    found_title = paper.get('title', '')
-                    if found_title and self._titles_similar(title, found_title):
-                        # Get the DBLP URL
-                        dblp_url = paper.get('url', '')
-                        if dblp_url:
-                            return True, dblp_url
-        except Exception:
-            pass
-
         # Try ACL Anthology
         try:
             # ACL Anthology search via their website
@@ -244,6 +224,26 @@ class CitationVerifier:
                                 semantic_url = f"https://www.semanticscholar.org/paper/{paper_id}"
                                 return True, semantic_url
         except Exception as e:
+            pass
+
+        # Try DBLP
+        try:
+            # DBLP API search
+            dblp_search_url = f"https://dblp.org/search/publ/api?q={quote_plus(title)}&format=json&h=1"
+            response = self.session.get(dblp_search_url, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                data = response.json()
+                hits = data.get('result', {}).get('hits', {}).get('hit', [])
+                if hits:
+                    paper = hits[0].get('info', {})
+                    found_title = paper.get('title', '')
+                    if found_title and self._titles_similar(title, found_title):
+                        # Get the DBLP URL
+                        dblp_url = paper.get('url', '')
+                        if dblp_url:
+                            return True, dblp_url
+        except Exception:
             pass
 
         # Try Google Scholar search
