@@ -117,7 +117,7 @@ class CitationVerifier:
         if not title:
             return False, None
 
-        # Try arXiv first if available (most reliable)
+        # Try arXiv first by ID if available (most reliable)
         arxiv_id = entry.get('eprint', '') or self._extract_arxiv_id(entry.get('url', ''))
         if arxiv_id:
             try:
@@ -127,6 +127,78 @@ class CitationVerifier:
                     return True, arxiv_url
             except Exception:
                 pass
+
+        # Try arXiv search by title
+        try:
+            # arXiv API search endpoint
+            search_query = quote_plus(f'ti:"{title}"')
+            arxiv_search_url = f"http://export.arxiv.org/api/query?search_query={search_query}&max_results=1"
+            response = self.session.get(arxiv_search_url, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                # Parse XML response
+                content = response.text
+                # Check if we got any results (entry tag present)
+                if '<entry>' in content:
+                    # Extract arxiv ID from the response
+                    match = re.search(r'<id>http://arxiv\.org/abs/([^<]+)</id>', content)
+                    if match:
+                        found_arxiv_id = match.group(1)
+                        arxiv_url = f"https://arxiv.org/abs/{found_arxiv_id}"
+                        # Verify title similarity
+                        title_match = re.search(r'<title>([^<]+)</title>', content)
+                        if title_match:
+                            found_title = title_match.group(1).strip()
+                            if self._titles_similar(title, found_title):
+                                return True, arxiv_url
+        except Exception:
+            pass
+
+        # Try DBLP
+        try:
+            # DBLP API search
+            dblp_search_url = f"https://dblp.org/search/publ/api?q={quote_plus(title)}&format=json&h=1"
+            response = self.session.get(dblp_search_url, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                data = response.json()
+                hits = data.get('result', {}).get('hits', {}).get('hit', [])
+                if hits:
+                    paper = hits[0].get('info', {})
+                    found_title = paper.get('title', '')
+                    if found_title and self._titles_similar(title, found_title):
+                        # Get the DBLP URL
+                        dblp_url = paper.get('url', '')
+                        if dblp_url:
+                            return True, dblp_url
+        except Exception:
+            pass
+
+        # Try ACL Anthology
+        try:
+            # ACL Anthology search via their website
+            acl_search_url = f"https://aclanthology.org/search/?q={quote_plus(title)}"
+            response = self.session.get(acl_search_url, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                # Look for paper results in search
+                results = soup.find_all('strong', class_='align-middle')
+                if results:
+                    # Check first result
+                    first_result = results[0]
+                    result_link = first_result.find('a')
+                    if result_link:
+                        found_title = result_link.get_text(strip=True)
+                        if self._titles_similar(title, found_title):
+                            paper_url = result_link.get('href', '')
+                            if paper_url:
+                                # Make absolute URL if relative
+                                if paper_url.startswith('/'):
+                                    paper_url = f"https://aclanthology.org{paper_url}"
+                                return True, paper_url
+        except Exception:
+            pass
 
         # Try Semantic Scholar API
         try:
@@ -525,6 +597,22 @@ class CitationVerifier:
         
         overlap = len(words1 & words2)
         return overlap / max(len(words1), len(words2))
+    
+    def _titles_similar(self, title1: str, title2: str) -> bool:
+        """
+        Check if two titles are similar enough to be considered the same paper.
+        
+        Args:
+            title1: First title
+            title2: Second title
+            
+        Returns:
+            True if titles are similar enough
+        """
+        title1_lower = title1.lower().strip('{}')
+        title2_lower = title2.lower().strip()
+        similarity = self._calculate_title_similarity(title1_lower, title2_lower)
+        return similarity >= self.TITLE_MATCH_THRESHOLD
     
     def _calculate_author_similarity(self, entry_names: List[str], online_names: List[str]) -> float:
         """
