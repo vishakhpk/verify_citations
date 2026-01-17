@@ -130,27 +130,39 @@ class CitationVerifier:
 
         # Try arXiv search by title
         try:
-            # arXiv API search endpoint
+            import xml.etree.ElementTree as ET
+            # arXiv API search endpoint (using HTTPS)
             search_query = quote_plus(f'ti:"{title}"')
-            arxiv_search_url = f"http://export.arxiv.org/api/query?search_query={search_query}&max_results=1"
+            arxiv_search_url = f"https://export.arxiv.org/api/query?search_query={search_query}&max_results=1"
             response = self.session.get(arxiv_search_url, timeout=self.timeout)
             
             if response.status_code == 200:
-                # Parse XML response
-                content = response.text
-                # Check if we got any results (entry tag present)
-                if '<entry>' in content:
-                    # Extract arxiv ID from the response
-                    match = re.search(r'<id>http://arxiv\.org/abs/([^<]+)</id>', content)
-                    if match:
-                        found_arxiv_id = match.group(1)
-                        arxiv_url = f"https://arxiv.org/abs/{found_arxiv_id}"
-                        # Verify title similarity
-                        title_match = re.search(r'<title>([^<]+)</title>', content)
-                        if title_match:
-                            found_title = title_match.group(1).strip()
-                            if self._titles_similar(title, found_title):
-                                return True, arxiv_url
+                # Parse XML response properly
+                try:
+                    root = ET.fromstring(response.content)
+                    # Define namespace for arXiv API
+                    ns = {'atom': 'http://www.w3.org/2005/Atom'}
+                    
+                    # Find the first entry
+                    entry = root.find('atom:entry', ns)
+                    if entry is not None:
+                        # Extract ID and title
+                        id_elem = entry.find('atom:id', ns)
+                        title_elem = entry.find('atom:title', ns)
+                        
+                        if id_elem is not None and title_elem is not None:
+                            # Extract arXiv ID from URL
+                            arxiv_id_url = id_elem.text
+                            if 'arxiv.org/abs/' in arxiv_id_url:
+                                found_arxiv_id = arxiv_id_url.split('arxiv.org/abs/')[-1]
+                                arxiv_url = f"https://arxiv.org/abs/{found_arxiv_id}"
+                                
+                                # Verify title similarity
+                                found_title = title_elem.text.strip()
+                                if self._titles_similar(title, found_title):
+                                    return True, arxiv_url
+                except ET.ParseError:
+                    pass
         except Exception:
             pass
 
@@ -609,8 +621,9 @@ class CitationVerifier:
         Returns:
             True if titles are similar enough
         """
-        title1_lower = title1.lower().strip('{}')
-        title2_lower = title2.lower().strip()
+        # Apply consistent preprocessing to both titles
+        title1_lower = title1.lower().strip('{}').strip()
+        title2_lower = title2.lower().strip('{}').strip()
         similarity = self._calculate_title_similarity(title1_lower, title2_lower)
         return similarity >= self.TITLE_MATCH_THRESHOLD
     
