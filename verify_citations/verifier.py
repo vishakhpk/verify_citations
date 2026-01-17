@@ -330,6 +330,10 @@ class CitationVerifier:
                 elif response.status_code == 403:
                     return None, f"⚠ URL returns 403 (Forbidden - server blocks automated access): {url}"
                 return False, f"✗ URL returned status {response.status_code}: {url}"
+        except (requests.exceptions.InvalidURL, requests.exceptions.InvalidSchema, 
+                requests.exceptions.MissingSchema) as e:
+            # URL format errors are genuine citation problems - treat as failure
+            return False, f"✗ Invalid URL: {str(e)}"
         except requests.exceptions.ConnectionError as e:
             # Connection errors are transient - treat as warning, not failure
             return None, f"⚠ Connection error (may be transient): {str(e)}"
@@ -338,6 +342,7 @@ class CitationVerifier:
             return None, f"⚠ Connection timeout (may be transient)"
         except requests.exceptions.RequestException as e:
             # Other network errors - treat as warning since they may be transient
+            # (e.g., SSLError, ProxyError, ChunkedEncodingError, etc.)
             return None, f"⚠ Network error (may be transient): {str(e)}"
 
     def _check_metadata(self, entry: Dict, search_url: str) -> Tuple[Optional[bool], str, Optional[Dict], List[str]]:
