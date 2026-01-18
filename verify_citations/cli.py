@@ -126,12 +126,11 @@ def _print_summary(results: list):
     # Count citations with actual 403 errors (where has_403 flag is True)
     citations_with_403 = [r for r in results if r.get('has_403', False)]
     
-    # Count citations where author verification failed or was not possible
-    # Author match is False (mismatch) or None (couldn't verify)
-    citations_no_author_verification = [
+    # Count citations where metadata could not be verified automatically
+    # This matches the count of "Could not verify metadata automatically" messages
+    citations_no_metadata_verification = [
         r for r in results 
-        if r.get('metadata_details') is not None and 
-        r['metadata_details'].get('author_match') in [False, None]
+        if r.get('metadata_not_verified', False)
     ]
     
     total = len(results)
@@ -155,10 +154,10 @@ def _print_summary(results: list):
             click.echo(f"- {result['id']}: {result['title']}")
     
     # Show citations where authors could not be verified
-    if citations_no_author_verification:
+    if citations_no_metadata_verification:
         click.echo(f"\n{Fore.YELLOW}Citations where author list could not be verified:{Style.RESET_ALL}")
-        click.echo(f"Count: {len(citations_no_author_verification)}\n")
-        for result in citations_no_author_verification:
+        click.echo(f"Count: {len(citations_no_metadata_verification)}\n")
+        for result in citations_no_metadata_verification:
             click.echo(f"- {result['id']}: {result['title']}")
 
 

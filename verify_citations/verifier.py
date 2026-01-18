@@ -84,6 +84,9 @@ class CitationVerifier:
             metadata_correct, metadata_msg, metadata_details, verbose_logs = self._check_metadata(entry, search_url)
             result['checks']['metadata_correct'] = metadata_correct
             result['messages'].append(metadata_msg)
+            # Track when metadata could not be verified (when message says "Could not verify metadata automatically")
+            if metadata_correct is None and metadata_msg == "- Could not verify metadata automatically":
+                result['metadata_not_verified'] = True
             if metadata_details:
                 result['metadata_details'] = metadata_details
             if verbose_logs:
