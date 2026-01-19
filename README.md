@@ -24,7 +24,7 @@ This tool performs automated checks to verify citations:
    - Compares paper titles with word-overlap similarity (70% threshold for metadata verification, 50% for initial findability)
    - Validates author lists by extracting and comparing author last names (50% match threshold)
    - **Handles name format differences**: Recognizes "Last, First" and "First Last" as the same author
-   - **Fuzzy matching**: Tolerates small misspellings (up to 2 character edit distance) in author names
+   - **Fuzzy matching**: Tolerates small misspellings (up to 2 character differences) in author names
    - **Special character handling**: Correctly processes LaTeX special characters in names
    - **"et al" / "and others" support**: Validates that all explicitly listed authors appear in online source
    - Works with arXiv, Semantic Scholar, and DBLP sources
@@ -90,7 +90,7 @@ Found 3 citation(s) to verify
     ℹ Version: arXiv:1706.03762
 ```
 
-When there are metadata mismatches (shown in yellow), detailed information is provided:
+When there are metadata mismatches (shown in yellow/red), detailed information is provided:
 ```
 [2/3] Verifying:
   [wrong2023] Wrong Paper Entry (Smith, John, 2023)
