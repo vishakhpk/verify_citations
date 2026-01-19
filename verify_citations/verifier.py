@@ -528,105 +528,101 @@ class CitationVerifier:
             
             # Check DBLP metadata
             elif parsed_url.netloc == 'dblp.org' or parsed_url.netloc.endswith('.dblp.org'):
-                # Extract DBLP key from URL (e.g., /rec/conf/eacl/HongN14 -> conf/eacl/HongN14)
-                dblp_key_match = re.search(r'/rec/(.+)', search_url)
-                if dblp_key_match:
-                    dblp_key = dblp_key_match.group(1)
-                    # Query DBLP API for this specific record
-                    api_url = f"https://dblp.org/rec/{dblp_key}.json"
-                    
-                    response = self.session.get(api_url, timeout=self.timeout)
-                    if response.status_code == 200:
-                        data = response.json()
-                        # DBLP JSON structure has data in 'result' -> 'hits' -> 'hit' array
-                        hit = data.get('result', {}).get('hits', {}).get('hit', [])
-                        if hit and len(hit) > 0:
-                            paper_info = hit[0].get('info', {})
-                            online_title_original = paper_info.get('title', '')
-                            online_title = online_title_original.lower() if online_title_original else ''
+                # Query DBLP using search API with the paper title (same approach as in _check_findable_online)
+                # This is more reliable than trying to parse the key from the URL
+                dblp_search_url = f"https://dblp.org/search/publ/api?q={quote_plus(title)}&format=json&h=1"
+                response = self.session.get(dblp_search_url, timeout=self.timeout)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    hits = data.get('result', {}).get('hits', {}).get('hit', [])
+                    if hits:
+                        paper_info = hits[0].get('info', {})
+                        online_title_original = paper_info.get('title', '')
+                        online_title = online_title_original.lower() if online_title_original else ''
+                        
+                        verbose_logs.append(f"  Comparing titles:")
+                        verbose_logs.append(f"    BibTeX: {entry.get('title', '').strip('{}')}")
+                        verbose_logs.append(f"    Online: {online_title_original}")
+                        
+                        # Check title
+                        title_match = None
+                        if online_title:
+                            title_similarity = self._calculate_title_similarity(title, online_title)
+                            title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
                             
-                            verbose_logs.append(f"  Comparing titles:")
-                            verbose_logs.append(f"    BibTeX: {entry.get('title', '').strip('{}')}")
-                            verbose_logs.append(f"    Online: {online_title_original}")
+                            verbose_logs.append(f"    Similarity: {title_similarity:.2%}, Threshold: {self.METADATA_SIMILARITY_THRESHOLD:.2%}")
+                            verbose_logs.append(f"    Result: {'✓ Match' if title_match else '✗ Mismatch'}")
+                        
+                        # Check authors
+                        author_match = None
+                        online_authors_original = None
+                        authors_data = paper_info.get('authors', {})
+                        if authors_data and entry_authors:
+                            # DBLP authors can be a dict with 'author' key containing array
+                            author_list = authors_data.get('author', [])
+                            if isinstance(author_list, list):
+                                online_author_names_list = [auth.get('text', '') if isinstance(auth, dict) else str(auth) 
+                                                           for auth in author_list]
+                                online_authors_original = ', '.join(online_author_names_list)
+                            elif isinstance(author_list, dict):
+                                # Single author case
+                                online_authors_original = author_list.get('text', '')
+                            else:
+                                online_authors_original = str(author_list)
                             
-                            # Check title
-                            title_match = None
-                            if online_title:
-                                title_similarity = self._calculate_title_similarity(title, online_title)
-                                title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
-                                
-                                verbose_logs.append(f"    Similarity: {title_similarity:.2%}, Threshold: {self.METADATA_SIMILARITY_THRESHOLD:.2%}")
-                                verbose_logs.append(f"    Result: {'✓ Match' if title_match else '✗ Mismatch'}")
+                            verbose_logs.append(f"  Comparing authors:")
+                            verbose_logs.append(f"    BibTeX: {entry_authors}")
+                            verbose_logs.append(f"    Online: {online_authors_original}")
                             
-                            # Check authors
-                            author_match = None
-                            online_authors_original = None
-                            authors_data = paper_info.get('authors', {})
-                            if authors_data and entry_authors:
-                                # DBLP authors can be a dict with 'author' key containing array
-                                author_list = authors_data.get('author', [])
-                                if isinstance(author_list, list):
-                                    online_author_names_list = [auth.get('text', '') if isinstance(auth, dict) else str(auth) 
-                                                               for auth in author_list]
-                                    online_authors_original = ', '.join(online_author_names_list)
-                                elif isinstance(author_list, dict):
-                                    # Single author case
-                                    online_authors_original = author_list.get('text', '')
-                                else:
-                                    online_authors_original = str(author_list)
-                                
-                                verbose_logs.append(f"  Comparing authors:")
-                                verbose_logs.append(f"    BibTeX: {entry_authors}")
-                                verbose_logs.append(f"    Online: {online_authors_original}")
-                                
-                                # Extract author last names for comparison
-                                entry_author_names = self._extract_author_names(entry_authors)
-                                online_author_names = self._extract_author_names(online_authors_original)
-                                
-                                verbose_logs.append(f"    Extracted BibTeX authors ({len(entry_author_names)}): {', '.join(entry_author_names)}")
-                                verbose_logs.append(f"    Extracted online authors ({len(online_author_names)}): {', '.join(online_author_names)}")
-                                
-                                # Check if entry has "and others"
-                                has_et_al = 'and others' in entry_authors.lower() or 'et al' in entry_authors.lower()
-                                
-                                if entry_author_names and online_author_names:
-                                    if has_et_al:
-                                        verbose_logs.append(f"    Note: BibTeX has 'and others' - checking if listed authors are complete")
-                                        if len(entry_author_names) > len(online_author_names):
-                                            author_similarity = 0.0
-                                            verbose_logs.append(f"    ✗ BibTeX has more authors than online ({len(entry_author_names)} > {len(online_author_names)})")
-                                        else:
-                                            matching = sum(1 for name in entry_author_names if name in online_author_names)
-                                            verbose_logs.append(f"    Matching authors: {matching}/{len(entry_author_names)}")
-                                            if matching == len(entry_author_names):
-                                                coverage = len(entry_author_names) / len(online_author_names)
-                                                verbose_logs.append(f"    Coverage: {coverage:.2%} of total authors")
-                                                author_similarity = coverage
-                                            else:
-                                                author_similarity = 0.0
-                                                verbose_logs.append(f"    ✗ Not all listed authors found online")
+                            # Extract author last names for comparison
+                            entry_author_names = self._extract_author_names(entry_authors)
+                            online_author_names = self._extract_author_names(online_authors_original)
+                            
+                            verbose_logs.append(f"    Extracted BibTeX authors ({len(entry_author_names)}): {', '.join(entry_author_names)}")
+                            verbose_logs.append(f"    Extracted online authors ({len(online_author_names)}): {', '.join(online_author_names)}")
+                            
+                            # Check if entry has "and others"
+                            has_et_al = 'and others' in entry_authors.lower() or 'et al' in entry_authors.lower()
+                            
+                            if entry_author_names and online_author_names:
+                                if has_et_al:
+                                    verbose_logs.append(f"    Note: BibTeX has 'and others' - checking if listed authors are complete")
+                                    if len(entry_author_names) > len(online_author_names):
+                                        author_similarity = 0.0
+                                        verbose_logs.append(f"    ✗ BibTeX has more authors than online ({len(entry_author_names)} > {len(online_author_names)})")
                                     else:
-                                        author_similarity = self._calculate_author_similarity(entry_author_names, online_author_names)
-                                        verbose_logs.append(f"    Similarity: {author_similarity:.2%}, Threshold: 50%")
-                                    
-                                    author_match = author_similarity >= 0.5
-                                    verbose_logs.append(f"    Result: {'✓ Match' if author_match else '✗ Mismatch'}")
-                            
-                            # Build details dictionary
-                            details = {
-                                'entry_title': entry.get('title', '').strip('{}'),
-                                'online_title': online_title_original,
-                                'entry_authors': entry_authors,
-                                'online_authors': online_authors_original,
-                                'source_url': search_url,
-                                'title_match': title_match,
-                                'author_match': author_match
-                            }
-                            
-                            # Format and return result
-                            result, message = self._format_metadata_result(title_match, author_match, details)
-                            # Only include details when there's a mismatch
-                            return result, message, (None if result else details), verbose_logs
+                                        matching = sum(1 for name in entry_author_names if name in online_author_names)
+                                        verbose_logs.append(f"    Matching authors: {matching}/{len(entry_author_names)}")
+                                        if matching == len(entry_author_names):
+                                            coverage = len(entry_author_names) / len(online_author_names)
+                                            verbose_logs.append(f"    Coverage: {coverage:.2%} of total authors")
+                                            author_similarity = coverage
+                                        else:
+                                            author_similarity = 0.0
+                                            verbose_logs.append(f"    ✗ Not all listed authors found online")
+                                else:
+                                    author_similarity = self._calculate_author_similarity(entry_author_names, online_author_names)
+                                    verbose_logs.append(f"    Similarity: {author_similarity:.2%}, Threshold: 50%")
+                                
+                                author_match = author_similarity >= 0.5
+                                verbose_logs.append(f"    Result: {'✓ Match' if author_match else '✗ Mismatch'}")
+                        
+                        # Build details dictionary
+                        details = {
+                            'entry_title': entry.get('title', '').strip('{}'),
+                            'online_title': online_title_original,
+                            'entry_authors': entry_authors,
+                            'online_authors': online_authors_original,
+                            'source_url': search_url,
+                            'title_match': title_match,
+                            'author_match': author_match
+                        }
+                        
+                        # Format and return result
+                        result, message = self._format_metadata_result(title_match, author_match, details)
+                        # Only include details when there's a mismatch
+                        return result, message, (None if result else details), verbose_logs
         except Exception as e:
             pass
 
