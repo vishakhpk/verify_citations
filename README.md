@@ -1,4 +1,4 @@
-# verify_citations
+# Verify BibTeX Citations
 
 A simple CLI utility to verify citations in BibTeX files by checking if they are valid or potentially hallucinated.
 
