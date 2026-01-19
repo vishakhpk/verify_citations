@@ -21,7 +21,7 @@ This tool performs automated checks to verify citations:
    - Supports automatic conversion of arXiv IDs to full URLs
 
 3. **Metadata Verification**: Checks if both the title AND author list match what's found online
-   - Compares paper titles with word-overlap similarity (70% threshold for verification)
+   - Compares paper titles with word-overlap similarity (70% threshold for metadata verification, 50% for initial findability)
    - Validates author lists by extracting and comparing author last names (50% match threshold)
    - **Handles name format differences**: Recognizes "Last, First" and "First Last" as the same author
    - **Fuzzy matching**: Tolerates small misspellings (up to 2 character edit distance) in author names
@@ -130,6 +130,7 @@ Citations where you should manually check the links due to a 403 error:
 
 Citations where author list could not be verified:
 Count: 1
+
   - another2023: Another Example Paper
 ```
 
@@ -152,7 +153,7 @@ The tool:
   - Handles HEAD requests with GET fallback
   - Distinguishes critical errors (404, invalid format) from warnings (403, timeouts)
 - Extracts and compares both title AND author metadata from online sources
-  - Uses word-overlap similarity for title matching (70% threshold)
+  - Uses word-overlap similarity for title matching (50% for findability, 70% for metadata verification)
   - Compares author last names with fuzzy matching to detect mismatches
   - Handles "et al" / "and others" by validating listed authors
 - Identifies different versions (preprints vs. published)
