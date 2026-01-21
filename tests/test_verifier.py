@@ -276,5 +276,22 @@ def test_title_similarity_with_difflib():
     assert 0 < similarity < 1, f"Similarity should be between 0 and 1 but got {similarity}"
 
 
+def test_exact_issue_scenario():
+    """Test the exact scenario from the GitHub issue."""
+    verifier = CitationVerifier()
+    
+    # Exact titles from the issue
+    bibtex_title = "Monitoring Human Dependence On {AI} Systems With Reliance Drills"
+    online_title = "Monitoring Human Dependence On AI Systems With Reliance Drills"
+    
+    similarity = verifier._calculate_title_similarity(bibtex_title, online_title)
+    
+    # After curly brace removal and lowercase, they should be 100% match
+    assert similarity == 1.0, f"Expected 100% similarity but got {similarity:.2%}"
+    
+    # Also verify that the threshold check passes
+    assert verifier._titles_similar(bibtex_title, online_title), "Titles should be considered similar"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

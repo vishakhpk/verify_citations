@@ -357,7 +357,7 @@ class CitationVerifier:
             Tuple of (correct, message, details_dict, verbose_logs)
         """
         title = self._remove_curly_braces(entry.get('title', '')).lower()
-        entry_authors = entry.get('author', '').strip('{}')
+        entry_authors = self._remove_curly_braces(entry.get('author', ''))
         verbose_logs = []
         
         try:
