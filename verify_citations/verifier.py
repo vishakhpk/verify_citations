@@ -3,6 +3,7 @@ Core citation verification logic.
 """
 
 import re
+from difflib import SequenceMatcher
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, quote_plus
 
@@ -116,7 +117,7 @@ class CitationVerifier:
         Returns:
             Tuple of (findable, search_url)
         """
-        title = entry.get('title', '').strip('{}')
+        title = self._remove_curly_braces(entry.get('title', ''))
         if not title:
             return False, None
 
@@ -355,7 +356,7 @@ class CitationVerifier:
         Returns:
             Tuple of (correct, message, details_dict, verbose_logs)
         """
-        title = entry.get('title', '').strip('{}').lower()
+        title = self._remove_curly_braces(entry.get('title', '')).lower()
         entry_authors = entry.get('author', '').strip('{}')
         verbose_logs = []
         
@@ -376,7 +377,7 @@ class CitationVerifier:
                         online_title = online_title_original.lower()
                         
                         verbose_logs.append(f"  Comparing titles:")
-                        verbose_logs.append(f"    BibTeX: {entry.get('title', '').strip('{}')}")
+                        verbose_logs.append(f"    BibTeX: {self._remove_curly_braces(entry.get('title', ''))}")
                         verbose_logs.append(f"    Online: {online_title_original}")
                         
                         title_similarity = self._calculate_title_similarity(title, online_title)
@@ -438,7 +439,7 @@ class CitationVerifier:
                     
                     # Build details dictionary
                     details = {
-                        'entry_title': entry.get('title', '').strip('{}'),
+                        'entry_title': self._remove_curly_braces(entry.get('title', '')),
                         'online_title': online_title_original,
                         'entry_authors': entry_authors,
                         'online_authors': online_authors_original,
@@ -512,7 +513,7 @@ class CitationVerifier:
                         
                         # Build details dictionary
                         details = {
-                            'entry_title': entry.get('title', '').strip('{}'),
+                            'entry_title': self._remove_curly_braces(entry.get('title', '')),
                             'online_title': online_title_original,
                             'entry_authors': entry_authors,
                             'online_authors': online_authors_str,
@@ -542,7 +543,7 @@ class CitationVerifier:
                         online_title = online_title_original.lower() if online_title_original else ''
                         
                         verbose_logs.append(f"  Comparing titles:")
-                        verbose_logs.append(f"    BibTeX: {entry.get('title', '').strip('{}')}")
+                        verbose_logs.append(f"    BibTeX: {self._remove_curly_braces(entry.get('title', ''))}")
                         verbose_logs.append(f"    Online: {online_title_original}")
                         
                         # Check title
@@ -610,7 +611,7 @@ class CitationVerifier:
                         
                         # Build details dictionary
                         details = {
-                            'entry_title': entry.get('title', '').strip('{}'),
+                            'entry_title': self._remove_curly_braces(entry.get('title', '')),
                             'online_title': online_title_original,
                             'entry_authors': entry_authors,
                             'online_authors': online_authors_original,
@@ -701,27 +702,35 @@ class CitationVerifier:
         
         return last_names
     
-    def _calculate_title_similarity(self, title1: str, title2: str) -> float:
+    def _remove_curly_braces(self, text: str) -> str:
         """
-        Calculate similarity between two titles based on word overlap.
+        Remove all curly braces from text.
         
         Args:
-            title1: First title (lowercase)
-            title2: Second title (lowercase)
+            text: Text that may contain curly braces
+            
+        Returns:
+            Text with all curly braces removed
+        """
+        return text.replace('{', '').replace('}', '')
+    
+    def _calculate_title_similarity(self, title1: str, title2: str) -> float:
+        """
+        Calculate similarity between two titles using difflib.
+        
+        Args:
+            title1: First title
+            title2: Second title
             
         Returns:
             Similarity score between 0 and 1
         """
-        words1 = set(word for word in title1.split() 
-                    if len(word) > self.MIN_WORD_LENGTH)
-        words2 = set(word for word in title2.split() 
-                    if len(word) > self.MIN_WORD_LENGTH)
+        # Convert to lowercase and remove curly braces for comparison
+        title1_processed = self._remove_curly_braces(title1.lower())
+        title2_processed = self._remove_curly_braces(title2.lower())
         
-        if not words1 or not words2:
-            return 0.0
-        
-        overlap = len(words1 & words2)
-        return overlap / max(len(words1), len(words2))
+        # Use SequenceMatcher from difflib to calculate similarity
+        return SequenceMatcher(None, title1_processed, title2_processed).ratio()
     
     def _titles_similar(self, title1: str, title2: str) -> bool:
         """
@@ -734,10 +743,7 @@ class CitationVerifier:
         Returns:
             True if titles are similar enough
         """
-        # Apply consistent preprocessing to both titles
-        title1_lower = title1.lower().strip('{}').strip()
-        title2_lower = title2.lower().strip('{}').strip()
-        similarity = self._calculate_title_similarity(title1_lower, title2_lower)
+        similarity = self._calculate_title_similarity(title1, title2)
         return similarity >= self.TITLE_MATCH_THRESHOLD
     
     def _calculate_author_similarity(self, entry_names: List[str], online_names: List[str]) -> float:

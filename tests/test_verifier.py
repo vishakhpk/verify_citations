@@ -214,5 +214,67 @@ def test_author_extraction_comma_separated():
     assert bibtex_names == online_names, "Should extract same names from both formats"
 
 
+def test_remove_curly_braces():
+    """Test removal of curly braces from titles."""
+    verifier = CitationVerifier()
+    
+    # Test with curly braces in the middle
+    assert verifier._remove_curly_braces("Monitoring Human Dependence On {AI} Systems") == "Monitoring Human Dependence On AI Systems"
+    
+    # Test with multiple curly braces
+    assert verifier._remove_curly_braces("{Deep} Learning with {GPU}s") == "Deep Learning with GPUs"
+    
+    # Test with nested curly braces
+    assert verifier._remove_curly_braces("Title with {{nested}} braces") == "Title with nested braces"
+    
+    # Test with no curly braces
+    assert verifier._remove_curly_braces("Normal Title") == "Normal Title"
+    
+    # Test empty string
+    assert verifier._remove_curly_braces("") == ""
+
+
+def test_title_similarity_with_curly_braces():
+    """Test that title similarity handles curly braces correctly."""
+    verifier = CitationVerifier()
+    
+    # Titles should be identical after removing curly braces
+    title1 = "Monitoring Human Dependence On {AI} Systems With Reliance Drills"
+    title2 = "Monitoring Human Dependence On AI Systems With Reliance Drills"
+    
+    similarity = verifier._calculate_title_similarity(title1, title2)
+    
+    # Should be 100% match after removing curly braces
+    assert similarity == 1.0, f"Similarity should be 1.0 but got {similarity}"
+
+
+def test_title_similarity_case_insensitive():
+    """Test that title similarity is case insensitive."""
+    verifier = CitationVerifier()
+    
+    # Same titles with different cases
+    title1 = "Deep Learning for Natural Language Processing"
+    title2 = "DEEP LEARNING FOR NATURAL LANGUAGE PROCESSING"
+    
+    similarity = verifier._calculate_title_similarity(title1, title2)
+    
+    # Should be 100% match
+    assert similarity == 1.0, f"Similarity should be 1.0 but got {similarity}"
+
+
+def test_title_similarity_with_difflib():
+    """Test that title similarity uses difflib for partial matches."""
+    verifier = CitationVerifier()
+    
+    # Similar but not identical titles
+    title1 = "Deep Learning for NLP"
+    title2 = "Deep Learning for Natural Language Processing"
+    
+    similarity = verifier._calculate_title_similarity(title1, title2)
+    
+    # Should have some similarity (not 0, not 1)
+    assert 0 < similarity < 1, f"Similarity should be between 0 and 1 but got {similarity}"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
