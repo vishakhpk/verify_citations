@@ -212,21 +212,13 @@ class CitationVerifier:
                 if data.get('data') and len(data['data']) > 0:
                     paper = data['data'][0]
                     # Check if the title matches reasonably well
-                    found_title = paper.get('title', '').lower()
-                    title_words = set(word for word in title.lower().split() 
-                                    if len(word) > self.MIN_WORD_LENGTH)
-                    found_words = set(word for word in found_title.split() 
-                                    if len(word) > self.MIN_WORD_LENGTH)
+                    found_title = paper.get('title', '')
                     
-                    if title_words and found_words:
-                        overlap = len(title_words & found_words)
-                        similarity = overlap / max(len(title_words), len(found_words))
-                        
-                        if similarity >= self.TITLE_MATCH_THRESHOLD:
-                            paper_id = paper.get('paperId', '')
-                            if paper_id:
-                                semantic_url = f"https://www.semanticscholar.org/paper/{paper_id}"
-                                return True, semantic_url
+                    if self._titles_similar(title, found_title):
+                        paper_id = paper.get('paperId', '')
+                        if paper_id:
+                            semantic_url = f"https://www.semanticscholar.org/paper/{paper_id}"
+                            return True, semantic_url
         except Exception as e:
             pass
 
