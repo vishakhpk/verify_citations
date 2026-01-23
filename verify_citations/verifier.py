@@ -38,7 +38,7 @@ class CitationVerifier:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
     
-    def _make_request_with_retry(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
+    def _make_request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
         """
         Make an HTTP request with retry logic for 429 errors.
         
@@ -48,7 +48,10 @@ class CitationVerifier:
             **kwargs: Additional arguments to pass to the request method
             
         Returns:
-            Response object if successful, None if all retries failed
+            Response object (always returns a response, even if it's a 429 after max retries)
+            
+        Raises:
+            requests.exceptions.RequestException: For network errors (not retried)
         """
         delay = self.INITIAL_RETRY_DELAY
         
@@ -65,20 +68,14 @@ class CitationVerifier:
                         # Exponential backoff with cap
                         delay = min(delay * 2, self.MAX_RETRY_DELAY)
                         continue
-                    else:
-                        # Max retries reached, return the 429 response
-                        return response
                 
-                # For any other status code, return immediately
+                # For any other status code (including final 429), return immediately
                 return response
                 
             except requests.exceptions.RequestException:
                 # For network errors, raise immediately without retrying
                 # These are handled by the calling code
                 raise
-        
-        # This should never be reached, but return None as fallback
-        return None
 
     def verify_citation(self, entry: Dict) -> Dict:
         """
