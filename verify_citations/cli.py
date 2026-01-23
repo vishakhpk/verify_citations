@@ -74,9 +74,6 @@ def main(bibtex_file, timeout, max_retries, verbose, summary_only):
         # Print summary
         _print_summary(results)
         
-    except FileNotFoundError:
-        click.echo(f"{Fore.RED}Error: File not found: {bibtex_file}{Style.RESET_ALL}", err=True)
-        sys.exit(1)
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {str(e)}{Style.RESET_ALL}", err=True)
         if verbose:
