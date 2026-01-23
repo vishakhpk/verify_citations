@@ -251,14 +251,14 @@ class CitationVerifier:
             response = self.session.get(search_url, timeout=self.timeout)
             
             if response.status_code == 200:
-                # Check if results contain the title (basic heuristic)
-                content = response.text.lower()
-                title_words = title.lower().split()
-                # Consider found if at least threshold fraction of title words appear in results
-                matches = sum(1 for word in title_words 
-                            if len(word) > self.MIN_WORD_LENGTH and word in content)
-                if matches >= len(title_words) * self.TITLE_MATCH_THRESHOLD:
-                    return True, search_url
+                # Parse HTML to extract first result title and authors
+                parsed_title, parsed_authors = self._parse_google_scholar_first_result(response.text)
+                
+                if parsed_title:
+                    # Use difflib to compare titles
+                    title_similarity = self._calculate_title_similarity(title, parsed_title.lower())
+                    if title_similarity >= self.TITLE_MATCH_THRESHOLD:
+                        return True, search_url
         except Exception as e:
             pass
 
@@ -616,6 +616,89 @@ class CitationVerifier:
                         result, message = self._format_metadata_result(title_match, author_match, details)
                         # Only include details when there's a mismatch
                         return result, message, (None if result else details), verbose_logs
+            
+            # Check Google Scholar metadata
+            elif 'scholar.google.com' in search_url:
+                response = self.session.get(search_url, timeout=self.timeout)
+                if response.status_code == 200:
+                    # Parse HTML to extract first result title and authors
+                    parsed_title, parsed_authors = self._parse_google_scholar_first_result(response.text)
+                    
+                    # Check title
+                    title_match = None
+                    online_title_original = None
+                    if parsed_title:
+                        online_title_original = parsed_title
+                        online_title = online_title_original.lower()
+                        
+                        verbose_logs.append(f"  Comparing titles:")
+                        verbose_logs.append(f"    BibTeX: {self._remove_curly_braces(entry.get('title', ''))}")
+                        verbose_logs.append(f"    Online: {online_title_original}")
+                        
+                        title_similarity = self._calculate_title_similarity(title, online_title)
+                        title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
+                        
+                        verbose_logs.append(f"    Similarity: {title_similarity:.2%}, Threshold: {self.METADATA_SIMILARITY_THRESHOLD:.2%}")
+                        verbose_logs.append(f"    Result: {'✓ Match' if title_match else '✗ Mismatch'}")
+                    
+                    # Check authors
+                    author_match = None
+                    online_authors_original = None
+                    if parsed_authors and entry_authors:
+                        online_authors_original = ', '.join(parsed_authors)
+                        
+                        verbose_logs.append(f"  Comparing authors:")
+                        verbose_logs.append(f"    BibTeX: {entry_authors}")
+                        verbose_logs.append(f"    Online: {online_authors_original}")
+                        
+                        # Extract author last names for comparison
+                        entry_author_names = self._extract_author_names(entry_authors)
+                        online_author_names = self._extract_author_names(online_authors_original)
+                        
+                        verbose_logs.append(f"    Extracted BibTeX authors ({len(entry_author_names)}): {', '.join(entry_author_names)}")
+                        verbose_logs.append(f"    Extracted online authors ({len(online_author_names)}): {', '.join(online_author_names)}")
+                        
+                        # Check if entry has "and others"
+                        has_et_al = 'and others' in entry_authors.lower() or 'et al' in entry_authors.lower()
+                        
+                        if entry_author_names and online_author_names:
+                            if has_et_al:
+                                verbose_logs.append(f"    Note: BibTeX has 'and others' - checking if listed authors are complete")
+                                if len(entry_author_names) > len(online_author_names):
+                                    author_similarity = 0.0
+                                    verbose_logs.append(f"    ✗ BibTeX has more authors than online ({len(entry_author_names)} > {len(online_author_names)})")
+                                else:
+                                    matching = sum(1 for name in entry_author_names if name in online_author_names)
+                                    verbose_logs.append(f"    Matching authors: {matching}/{len(entry_author_names)}")
+                                    if matching == len(entry_author_names):
+                                        coverage = len(entry_author_names) / len(online_author_names)
+                                        verbose_logs.append(f"    Coverage: {coverage:.2%} of total authors")
+                                        author_similarity = coverage
+                                    else:
+                                        author_similarity = 0.0
+                                        verbose_logs.append(f"    ✗ Not all listed authors found online")
+                            else:
+                                author_similarity = self._calculate_author_similarity(entry_author_names, online_author_names)
+                                verbose_logs.append(f"    Similarity: {author_similarity:.2%}, Threshold: 50%")
+                            
+                            author_match = author_similarity >= 0.5
+                            verbose_logs.append(f"    Result: {'✓ Match' if author_match else '✗ Mismatch'}")
+                    
+                    # Build details dictionary
+                    details = {
+                        'entry_title': self._remove_curly_braces(entry.get('title', '')),
+                        'online_title': online_title_original,
+                        'entry_authors': entry_authors,
+                        'online_authors': online_authors_original,
+                        'source_url': search_url,
+                        'title_match': title_match,
+                        'author_match': author_match
+                    }
+                    
+                    # Format and return result
+                    result, message = self._format_metadata_result(title_match, author_match, details)
+                    # Only include details when there's a mismatch
+                    return result, message, (None if result else details), verbose_logs
         except Exception as e:
             pass
 
@@ -705,6 +788,70 @@ class CitationVerifier:
             Text with all curly braces removed
         """
         return text.replace('{', '').replace('}', '')
+    
+    def _parse_google_scholar_first_result(self, html_content: str) -> Tuple[Optional[str], Optional[List[str]]]:
+        """
+        Parse Google Scholar HTML to extract title and authors from the first search result.
+        
+        Args:
+            html_content: HTML content from Google Scholar search
+            
+        Returns:
+            Tuple of (title, authors_list) where both can be None if parsing fails
+        """
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Find the main results container
+            results_container = soup.find('div', id='gs_res_ccl_mid')
+            if not results_container:
+                return None, None
+            
+            # Find the first result - prefer gs_r gs_or, fallback to gs_r
+            first_result = results_container.find('div', class_='gs_r gs_or')
+            if not first_result:
+                first_result = results_container.find('div', class_='gs_r')
+            
+            if not first_result:
+                return None, None
+            
+            # Extract title
+            title = None
+            title_elem = first_result.find(class_='gs_rt')
+            if title_elem:
+                # Prefer anchor tag if it exists
+                title_link = title_elem.find('a')
+                if title_link:
+                    title_text = title_link.get_text(strip=True)
+                else:
+                    title_text = title_elem.get_text(strip=True)
+                
+                # Clean the title - remove leading bracketed labels like [PDF], [HTML], [C]
+                title = re.sub(r'^\s*\[[^\]]+\]\s*', '', title_text)
+            
+            # Extract authors
+            authors_list = None
+            authors_elem = first_result.find(class_='gs_a')
+            if authors_elem:
+                authors_text = authors_elem.get_text(strip=True)
+                
+                # Split on the first dash separator to separate authors from venue/year
+                # Using regex to handle non-breaking spaces and other whitespace variations
+                parts = re.split(r'\s*-\s*', authors_text, maxsplit=1)
+                if parts:
+                    authors_part = parts[0]
+                    
+                    # Remove trailing ellipsis if present
+                    authors_part = authors_part.rstrip('…').strip()
+                    
+                    # Split by commas to get individual authors
+                    if authors_part:
+                        authors_list = [name.strip() for name in authors_part.split(',') if name.strip()]
+            
+            return title, authors_list
+            
+        except Exception:
+            return None, None
     
     def _calculate_title_similarity(self, title1: str, title2: str) -> float:
         """
