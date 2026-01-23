@@ -32,3 +32,8 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["verify_citations*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests that require network access (deselect with '-m \"not integration\"')",
+]
