@@ -695,5 +695,83 @@ def test_search_continues_after_429():
         assert '429' in log_text or 'rate limited' in log_text.lower()
 
 
+def test_verbose_logging_for_retries():
+    """Test that verbose logs are generated for retry attempts."""
+    from unittest.mock import Mock, patch
+    
+    verifier = CitationVerifier()
+    
+    # Mock response that returns 429 twice, then 200
+    mock_response_429 = Mock()
+    mock_response_429.status_code = 429
+    
+    mock_response_200 = Mock()
+    mock_response_200.status_code = 200
+    
+    with patch.object(verifier.session, 'get', 
+                      side_effect=[mock_response_429, mock_response_429, mock_response_200]):
+        with patch('time.sleep'):
+            verbose_logs = []
+            response = verifier._make_request_with_retry('get', 'https://example.com', verbose_logs)
+            
+            # Should have logged retry attempts
+            assert len(verbose_logs) > 0
+            log_text = ' '.join(verbose_logs)
+            
+            # Should mention 429 and waiting
+            assert '429' in log_text
+            assert 'Rate Limited' in log_text
+            assert 'Waiting' in log_text
+            
+            # Should show attempt numbers
+            assert 'attempt' in log_text.lower()
+            
+            # Final response should be 200
+            assert response.status_code == 200
+
+
+def test_verbose_logging_for_semantic_scholar_authors():
+    """Test that verbose logs are generated for author verification in Semantic Scholar."""
+    from unittest.mock import Mock, patch
+    
+    verifier = CitationVerifier()
+    
+    entry = {
+        'ID': 'test2023',
+        'title': 'Test Paper About Machine Learning',
+        'author': 'Smith, John and Doe, Jane',
+        'year': '2023'
+    }
+    
+    search_url = 'https://www.semanticscholar.org/paper/abc123'
+    
+    # Mock the Semantic Scholar API response
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        'title': 'Test Paper About Machine Learning',
+        'authors': [
+            {'name': 'John Smith'},
+            {'name': 'Jane Doe'}
+        ]
+    }
+    
+    with patch.object(verifier, '_make_request_with_retry', return_value=mock_response):
+        correct, message, details, logs = verifier._check_metadata(entry, search_url)
+        
+        # Should have verbose logs
+        assert len(logs) > 0
+        log_text = ' '.join(logs)
+        
+        # Should mention author comparison
+        assert 'Comparing authors' in log_text or 'authors' in log_text.lower()
+        assert 'BibTeX' in log_text
+        assert 'Online' in log_text
+        assert 'Extracted' in log_text
+        
+        # Should show similarity or match result
+        assert 'Similarity' in log_text or 'Match' in log_text or 'Result' in log_text
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

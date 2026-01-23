@@ -38,7 +38,7 @@ class CitationVerifier:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
     
-    def _make_request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
+    def _make_request_with_retry(self, method: str, url: str, verbose_logs: Optional[List[str]] = None, **kwargs) -> requests.Response:
         """
         Make an HTTP request with retry logic for 429 (rate limit) errors.
         
@@ -49,6 +49,7 @@ class CitationVerifier:
         Args:
             method: HTTP method ('get', 'head', 'post', etc.)
             url: URL to request
+            verbose_logs: Optional list to append verbose retry logging messages to
             **kwargs: Additional arguments to pass to the request method
             
         Returns:
@@ -70,11 +71,20 @@ class CitationVerifier:
                 # If we get a 429, retry with exponential backoff
                 if response.status_code == 429:
                     if attempt < self.MAX_RETRIES:
+                        # Log retry attempt if verbose logging is enabled
+                        if verbose_logs is not None:
+                            verbose_logs.append(f"    ⚠ Got 429 (Rate Limited) on attempt {attempt + 1}/{self.MAX_RETRIES + 1}")
+                            verbose_logs.append(f"    ⏱ Waiting {delay}s before retry...")
+                        
                         # Wait before retrying
                         time.sleep(delay)
                         # Exponential backoff with cap
                         delay = min(delay * 2, self.MAX_RETRY_DELAY)
                         continue
+                    else:
+                        # Max retries reached
+                        if verbose_logs is not None:
+                            verbose_logs.append(f"    ⚠ Got 429 (Rate Limited) on attempt {attempt + 1}/{self.MAX_RETRIES + 1} - max retries reached")
                 
                 # For any other status code (including final 429), return immediately
                 return response
@@ -184,7 +194,7 @@ class CitationVerifier:
             verbose_logs.append(f"  Trying arXiv by ID: {arxiv_id}")
             try:
                 arxiv_url = f"https://arxiv.org/abs/{arxiv_id}"
-                response = self._make_request_with_retry('get', arxiv_url, timeout=self.timeout)
+                response = self._make_request_with_retry('get', arxiv_url, verbose_logs, timeout=self.timeout)
                 if response.status_code == 200:
                     verbose_logs.append(f"    ✓ Found on arXiv: {arxiv_url}")
                     return True, arxiv_url, verbose_logs
@@ -202,7 +212,7 @@ class CitationVerifier:
             # arXiv API search endpoint (using HTTPS)
             search_query = quote_plus(f'ti:"{title}"')
             arxiv_search_url = f"https://export.arxiv.org/api/query?search_query={search_query}&max_results=1"
-            response = self._make_request_with_retry('get', arxiv_search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', arxiv_search_url, verbose_logs, timeout=self.timeout)
             
             if response.status_code == 200:
                 # Parse XML response properly
@@ -248,7 +258,7 @@ class CitationVerifier:
         try:
             # ACL Anthology search via their website
             acl_search_url = f"https://aclanthology.org/search/?q={quote_plus(title)}"
-            response = self._make_request_with_retry('get', acl_search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', acl_search_url, verbose_logs, timeout=self.timeout)
             
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
@@ -289,7 +299,7 @@ class CitationVerifier:
                 'limit': 1,
                 'fields': 'title,authors,url'
             }
-            response = self._make_request_with_retry('get', api_url, params=params, timeout=self.timeout)
+            response = self._make_request_with_retry('get', api_url, verbose_logs, params=params, timeout=self.timeout)
             
             if response.status_code == 200:
                 data = response.json()
@@ -320,7 +330,7 @@ class CitationVerifier:
         try:
             # DBLP API search
             dblp_search_url = f"https://dblp.org/search/publ/api?q={quote_plus(title)}&format=json&h=1"
-            response = self._make_request_with_retry('get', dblp_search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', dblp_search_url, verbose_logs, timeout=self.timeout)
             
             if response.status_code == 200:
                 data = response.json()
@@ -353,7 +363,7 @@ class CitationVerifier:
             search_url = f"https://scholar.google.com/scholar?q={quote_plus(query)}"
             verbose_logs.append(f"    Query: {search_url}")
             
-            response = self._make_request_with_retry('get', search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', search_url, verbose_logs, timeout=self.timeout)
             
             if response.status_code == 200:
                 verbose_logs.append(f"    Response status: 200 OK")
@@ -392,7 +402,7 @@ class CitationVerifier:
             query = f'"{title}" paper pdf'
             search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
             
-            response = self._make_request_with_retry('get', search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', search_url, verbose_logs, timeout=self.timeout)
             
             if response.status_code == 200:
                 content = response.text.lower()
@@ -495,7 +505,7 @@ class CitationVerifier:
             # Properly check if URL is from arxiv.org domain
             parsed_url = urlparse(search_url)
             if parsed_url.netloc == 'arxiv.org' or parsed_url.netloc.endswith('.arxiv.org'):
-                response = self._make_request_with_retry('get', search_url, timeout=self.timeout)
+                response = self._make_request_with_retry('get', search_url, verbose_logs, timeout=self.timeout)
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, 'html.parser')
                     
@@ -593,7 +603,7 @@ class CitationVerifier:
                     api_url = f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}"
                     params = {'fields': 'title,authors'}
                     
-                    response = self._make_request_with_retry('get', api_url, params=params, timeout=self.timeout)
+                    response = self._make_request_with_retry('get', api_url, verbose_logs, params=params, timeout=self.timeout)
                     if response.status_code == 200:
                         data = response.json()
                         online_title_original = data.get('title', '')
@@ -603,8 +613,15 @@ class CitationVerifier:
                         # Check title
                         title_match = None
                         if online_title:
+                            verbose_logs.append(f"  Comparing titles:")
+                            verbose_logs.append(f"    BibTeX: {self._remove_curly_braces(entry.get('title', ''))}")
+                            verbose_logs.append(f"    Online: {online_title_original}")
+                            
                             title_similarity = self._calculate_title_similarity(title, online_title)
                             title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
+                            
+                            verbose_logs.append(f"    Similarity: {title_similarity:.2%}, Threshold: {self.METADATA_SIMILARITY_THRESHOLD:.2%}")
+                            verbose_logs.append(f"    Result: {'✓ Match' if title_match else '✗ Mismatch'}")
                         
                         # Check authors
                         author_match = None
@@ -613,6 +630,10 @@ class CitationVerifier:
                             online_author_names = [author.get('name', '').lower() 
                                                   for author in online_authors]
                             online_authors_str = ', '.join([author.get('name', '') for author in online_authors])
+                            
+                            verbose_logs.append(f"  Comparing authors:")
+                            verbose_logs.append(f"    BibTeX: {entry_authors}")
+                            verbose_logs.append(f"    Online: {online_authors_str}")
                             
                             # Extract last names from online authors
                             online_last_names = []
@@ -623,24 +644,35 @@ class CitationVerifier:
                             
                             entry_author_names = self._extract_author_names(entry_authors)
                             
+                            verbose_logs.append(f"    Extracted BibTeX authors ({len(entry_author_names)}): {', '.join(entry_author_names)}")
+                            verbose_logs.append(f"    Extracted online authors ({len(online_last_names)}): {', '.join(online_last_names)}")
+                            
                             # Check if entry has "and others"
                             has_et_al = 'and others' in entry_authors.lower() or 'et al' in entry_authors.lower()
                             
                             if entry_author_names and online_last_names:
                                 if has_et_al:
+                                    verbose_logs.append(f"    Note: BibTeX has 'and others' - checking if listed authors are complete")
                                     # For "and others", we need ALL authors to match
                                     if len(entry_author_names) > len(online_last_names):
                                         author_similarity = 0.0
+                                        verbose_logs.append(f"    ✗ BibTeX has more authors than online ({len(entry_author_names)} > {len(online_last_names)})")
                                     else:
                                         matching = sum(1 for name in entry_author_names if name in online_last_names)
+                                        verbose_logs.append(f"    Matching authors: {matching}/{len(entry_author_names)}")
                                         if matching == len(entry_author_names):
                                             coverage = len(entry_author_names) / len(online_last_names)
+                                            verbose_logs.append(f"    Coverage: {coverage:.2%} of total authors")
                                             author_similarity = coverage
                                         else:
                                             author_similarity = 0.0
+                                            verbose_logs.append(f"    ✗ Not all listed authors found online")
                                 else:
                                     author_similarity = self._calculate_author_similarity(entry_author_names, online_last_names)
+                                    verbose_logs.append(f"    Similarity: {author_similarity:.2%}, Threshold: 50%")
+                                
                                 author_match = author_similarity >= 0.5
+                                verbose_logs.append(f"    Result: {'✓ Match' if author_match else '✗ Mismatch'}")
                         
                         # Build details dictionary
                         details = {
@@ -663,7 +695,7 @@ class CitationVerifier:
                 # Query DBLP using search API with the paper title (same approach as in _check_findable_online)
                 # This is more reliable than trying to parse the key from the URL
                 dblp_search_url = f"https://dblp.org/search/publ/api?q={quote_plus(title)}&format=json&h=1"
-                response = self._make_request_with_retry('get', dblp_search_url, timeout=self.timeout)
+                response = self._make_request_with_retry('get', dblp_search_url, verbose_logs, timeout=self.timeout)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -759,7 +791,7 @@ class CitationVerifier:
             # Check Google Scholar metadata
             elif parsed_url.netloc == 'scholar.google.com' or parsed_url.netloc.endswith('.scholar.google.com'):
                 verbose_logs.append(f"  Checking Google Scholar metadata from: {search_url}")
-                response = self._make_request_with_retry('get', search_url, timeout=self.timeout)
+                response = self._make_request_with_retry('get', search_url, verbose_logs, timeout=self.timeout)
                 if response.status_code == 200:
                     verbose_logs.append(f"    Response status: 200 OK")
                     # Parse HTML to extract first result title and authors
