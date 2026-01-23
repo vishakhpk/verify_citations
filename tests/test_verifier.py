@@ -376,6 +376,36 @@ def test_parse_google_scholar_first_result_with_ellipsis():
     assert not any('…' in author for author in authors)
 
 
+def test_parse_google_scholar_first_result_with_ascii_ellipsis():
+    """Test parsing Google Scholar HTML with ASCII ellipsis (...) in authors."""
+    verifier = CitationVerifier()
+    
+    # Google Scholar HTML with ASCII ellipsis
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_r gs_or">
+            <h3 class="gs_rt">
+                <a href="https://example.com/paper.pdf">Test Paper</a>
+            </h3>
+            <div class="gs_a">
+                J Smith, A Johnson, B Williams... - Conference, 2021 - example.com
+            </div>
+        </div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    assert title == "Test Paper"
+    assert authors is not None
+    # ASCII ellipsis should be removed
+    assert len(authors) == 3
+    assert "B Williams" in authors
+    # ASCII ellipsis should not be in last author name
+    assert not any('...' in author for author in authors)
+    assert not any('.' in authors[-1] for char in '.')  # No trailing periods
+
+
 def test_parse_google_scholar_first_result_no_anchor():
     """Test parsing Google Scholar HTML when title has no anchor tag."""
     verifier = CitationVerifier()

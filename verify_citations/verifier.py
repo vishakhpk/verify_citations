@@ -826,8 +826,9 @@ class CitationVerifier:
                 else:
                     title_text = title_elem.get_text(strip=True)
                 
-                # Clean the title - remove leading bracketed labels like [PDF], [HTML], [C]
-                title = re.sub(r'^\s*\[[^\]]+\]\s*', '', title_text)
+                # Clean the title - remove leading bracketed labels like [PDF], [HTML], [C], [CITATION]
+                # Using specific pattern to avoid removing other brackets
+                title = re.sub(r'^\s*\[(PDF|HTML|C|CITATION|BOOK)\]\s*', '', title_text, flags=re.IGNORECASE)
             
             # Extract authors
             authors_list = None
@@ -841,8 +842,8 @@ class CitationVerifier:
                 if parts:
                     authors_part = parts[0]
                     
-                    # Remove trailing ellipsis if present
-                    authors_part = authors_part.rstrip('…').strip()
+                    # Remove trailing ellipsis if present (both Unicode and ASCII variants)
+                    authors_part = authors_part.rstrip('…...').strip()
                     
                     # Split by commas to get individual authors
                     if authors_part:
