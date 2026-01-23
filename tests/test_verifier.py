@@ -597,10 +597,10 @@ def test_max_retries_on_429():
         with patch('time.sleep') as mock_sleep:
             response = verifier._make_request_with_retry('get', 'https://example.com')
             
-            # Should have called get MAX_RETRIES + 1 times (initial + retries)
-            assert mock_get.call_count == verifier.MAX_RETRIES + 1
-            # Should have slept MAX_RETRIES times
-            assert mock_sleep.call_count == verifier.MAX_RETRIES
+            # Should have called get max_retries + 1 times (initial + retries)
+            assert mock_get.call_count == verifier.max_retries + 1
+            # Should have slept max_retries times
+            assert mock_sleep.call_count == verifier.max_retries
             # Final response should still be 429
             assert response.status_code == 429
 
@@ -621,12 +621,12 @@ def test_exponential_backoff_on_429():
             
             # Check that sleep was called with increasing delays
             sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
-            assert len(sleep_calls) == verifier.MAX_RETRIES
+            assert len(sleep_calls) == verifier.max_retries
             
             # Verify exponential backoff
             expected_delays = []
             delay = verifier.INITIAL_RETRY_DELAY
-            for _ in range(verifier.MAX_RETRIES):
+            for _ in range(verifier.max_retries):
                 expected_delays.append(delay)
                 delay = min(delay * 2, verifier.MAX_RETRY_DELAY)
             
@@ -832,6 +832,32 @@ def test_sotopia_pi_paper_google_scholar():
             pytest.skip(f"Google Scholar returned status {response.status_code} - skipping test")
     except Exception as e:
         pytest.skip(f"Network error accessing Google Scholar: {str(e)}")
+
+
+def test_custom_max_retries():
+    """Test that max_retries parameter can be customized."""
+    from unittest.mock import Mock, patch
+    
+    # Create verifier with custom max_retries
+    verifier = CitationVerifier(max_retries=5)
+    
+    # Verify the value is set correctly
+    assert verifier.max_retries == 5
+    
+    # Mock response that always returns 429
+    mock_response_429 = Mock()
+    mock_response_429.status_code = 429
+    
+    with patch.object(verifier.session, 'get', return_value=mock_response_429) as mock_get:
+        with patch('time.sleep') as mock_sleep:
+            response = verifier._make_request_with_retry('get', 'https://example.com')
+            
+            # Should have called get 6 times (initial + 5 retries)
+            assert mock_get.call_count == 6
+            # Should have slept 5 times
+            assert mock_sleep.call_count == 5
+            # Final response should still be 429
+            assert response.status_code == 429
 
 
 if __name__ == '__main__':

@@ -20,19 +20,21 @@ class CitationVerifier:
     TITLE_MATCH_THRESHOLD = 0.5  # Minimum fraction of title words to match for findability
     METADATA_SIMILARITY_THRESHOLD = 0.7  # Minimum word overlap for metadata verification
     
-    # Constants for retry logic
-    MAX_RETRIES = 3  # Maximum number of retries for 429 errors
+    # Constants for retry logic (defaults)
+    DEFAULT_MAX_RETRIES = 3  # Default maximum number of retries for 429 errors
     INITIAL_RETRY_DELAY = 1  # Initial delay in seconds before retrying
     MAX_RETRY_DELAY = 60  # Maximum delay between retries in seconds
 
-    def __init__(self, timeout: int = 10):
+    def __init__(self, timeout: int = 10, max_retries: int = None):
         """
         Initialize the citation verifier.
         
         Args:
             timeout: Request timeout in seconds
+            max_retries: Maximum number of retries for 429 errors (default: 3)
         """
         self.timeout = timeout
+        self.max_retries = max_retries if max_retries is not None else self.DEFAULT_MAX_RETRIES
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -43,7 +45,7 @@ class CitationVerifier:
         Make an HTTP request with retry logic for 429 (rate limit) errors.
         
         When a 429 error occurs, retries the request with exponential backoff.
-        After MAX_RETRIES attempts, returns the final 429 response to allow
+        After max_retries attempts, returns the final 429 response to allow
         the caller to handle it (typically by trying an alternative source).
         
         Args:
@@ -63,17 +65,17 @@ class CitationVerifier:
         """
         delay = self.INITIAL_RETRY_DELAY
         
-        for attempt in range(self.MAX_RETRIES + 1):
+        for attempt in range(self.max_retries + 1):
             try:
                 # Make the request
                 response = getattr(self.session, method)(url, **kwargs)
                 
                 # If we get a 429, retry with exponential backoff
                 if response.status_code == 429:
-                    if attempt < self.MAX_RETRIES:
+                    if attempt < self.max_retries:
                         # Log retry attempt if verbose logging is enabled
                         if verbose_logs is not None:
-                            verbose_logs.append(f"    ⚠ Got 429 (Rate Limited) on attempt {attempt + 1}/{self.MAX_RETRIES + 1}")
+                            verbose_logs.append(f"    ⚠ Got 429 (Rate Limited) on attempt {attempt + 1}/{self.max_retries + 1}")
                             verbose_logs.append(f"    ⏱ Waiting {delay}s before retry...")
                         
                         # Wait before retrying
@@ -84,7 +86,7 @@ class CitationVerifier:
                     else:
                         # Max retries reached
                         if verbose_logs is not None:
-                            verbose_logs.append(f"    ⚠ Got 429 (Rate Limited) on attempt {attempt + 1}/{self.MAX_RETRIES + 1} - max retries reached")
+                            verbose_logs.append(f"    ⚠ Got 429 (Rate Limited) on attempt {attempt + 1}/{self.max_retries + 1} - max retries reached")
                 
                 # For any other status code (including final 429), return immediately
                 return response
