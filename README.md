@@ -23,7 +23,7 @@ This tool performs automated checks to verify citations:
    - Supports automatic conversion of arXiv IDs to full URLs
 
 3. **Metadata Verification**: Checks if both the title AND author list match what's found online
-   - Compares paper titles with word-overlap similarity (70% threshold for metadata verification, 50% for initial findability)
+   - Compares paper titles with difflib sequence similarity (70% threshold for metadata verification, 50% for initial findability), with a word-overlap fallback for DuckDuckGo results
    - Validates author lists by extracting and comparing author last names (50% match threshold)
    - **Handles name format differences**: Recognizes "Last, First" and "First Last" as the same author
    - **Fuzzy matching**: Tolerates small misspellings (up to 2 character differences) in author names
@@ -31,8 +31,8 @@ This tool performs automated checks to verify citations:
    - **"et al" / "and others" support**: Validates that all explicitly listed authors appear in online source
    - Works with arXiv, Semantic Scholar, and DBLP sources
 
-4. **Version Information**: Identifies the correct version among different ones online
-   - arXiv preprints with version numbers
+4. **Version Information**: Surfaces version-related fields from BibTeX entries
+   - arXiv preprints (including version suffixes)
    - Journal publications
    - Conference proceedings
    - DOI information when available
@@ -159,10 +159,10 @@ The tool:
   - **Automatic retry on rate limits**: Retries with exponential backoff (1s, 2s, 4s) when encountering 429 errors
   - Distinguishes critical errors (404, invalid format) from warnings (403, 429, timeouts)
 - Extracts and compares both title AND author metadata from online sources
-  - Uses word-overlap similarity for title matching (50% for findability, 70% for metadata verification)
+  - Uses difflib sequence similarity for title matching (50% for findability, 70% for metadata verification), with a word-overlap fallback for DuckDuckGo results
   - Compares author last names with fuzzy matching to detect mismatches
   - Handles "et al" / "and others" by validating listed authors
-- Identifies different versions (preprints vs. published)
+- Surfaces version-related fields from the BibTeX entry (preprints vs. published metadata)
 - Provides a clear report of verification results with color-coded output
 
 ## Requirements
