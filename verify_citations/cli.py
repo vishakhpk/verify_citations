@@ -12,8 +12,20 @@ from .parser import parse_bibtex_file, format_entry_summary
 from .verifier import CitationVerifier
 
 
+def validate_bibtex_file(ctx, param, value):
+    """Validate that the BibTeX file exists."""
+    if value and not Path(value).exists():
+        raise click.BadParameter(
+            f"File not found: {value}\n"
+            f"Tip: Specify a BibTeX file or ensure 'references.bib' exists in the current directory"
+        )
+    return value
+
+
 @click.command()
-@click.option('--bibtex-file', default='references.bib', type=click.Path(), help='BibTeX file to verify (default: references.bib)')
+@click.option('--bibtex-file', default='references.bib', type=click.Path(), 
+              callback=validate_bibtex_file,
+              help='BibTeX file to verify (default: references.bib)')
 @click.option('--timeout', default=10, help='Request timeout in seconds')
 @click.option('--max-retries', default=3, help='Maximum retries for 429 rate limit errors')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output')
@@ -36,12 +48,6 @@ def main(bibtex_file, timeout, max_retries, verbose, summary_only):
     """
     # Initialize colorama for cross-platform colored output
     init(autoreset=True)
-    
-    # Validate that the file exists
-    if not Path(bibtex_file).exists():
-        click.echo(f"{Fore.RED}Error: File not found: {bibtex_file}{Style.RESET_ALL}", err=True)
-        click.echo(f"{Fore.YELLOW}Tip: Specify a BibTeX file or ensure 'references.bib' exists in the current directory{Style.RESET_ALL}", err=True)
-        sys.exit(1)
     
     click.echo(f"{Fore.CYAN}=== Citation Verification Tool ==={Style.RESET_ALL}\n")
     click.echo(f"Processing: {bibtex_file}\n")
