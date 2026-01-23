@@ -13,7 +13,7 @@ from .verifier import CitationVerifier
 
 
 @click.command()
-@click.argument('bibtex_file', required=False, default='references.bib', type=click.Path(exists=True))
+@click.argument('bibtex_file', required=False, default='references.bib', type=click.Path())
 @click.option('--timeout', default=10, help='Request timeout in seconds')
 @click.option('--max-retries', default=3, help='Maximum retries for 429 rate limit errors')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output')
@@ -36,6 +36,12 @@ def main(bibtex_file, timeout, max_retries, verbose, summary_only):
     """
     # Initialize colorama for cross-platform colored output
     init(autoreset=True)
+    
+    # Validate that the file exists
+    if not Path(bibtex_file).exists():
+        click.echo(f"{Fore.RED}Error: File not found: {bibtex_file}{Style.RESET_ALL}", err=True)
+        click.echo(f"{Fore.YELLOW}Tip: Specify a BibTeX file or ensure 'references.bib' exists in the current directory{Style.RESET_ALL}", err=True)
+        sys.exit(1)
     
     click.echo(f"{Fore.CYAN}=== Citation Verification Tool ==={Style.RESET_ALL}\n")
     click.echo(f"Processing: {bibtex_file}\n")
