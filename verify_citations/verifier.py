@@ -40,7 +40,11 @@ class CitationVerifier:
     
     def _make_request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
         """
-        Make an HTTP request with retry logic for 429 errors.
+        Make an HTTP request with retry logic for 429 (rate limit) errors.
+        
+        When a 429 error occurs, retries the request with exponential backoff.
+        After MAX_RETRIES attempts, returns the final 429 response to allow
+        the caller to handle it (typically by trying an alternative source).
         
         Args:
             method: HTTP method ('get', 'head', 'post', etc.)
@@ -48,10 +52,13 @@ class CitationVerifier:
             **kwargs: Additional arguments to pass to the request method
             
         Returns:
-            Response object (always returns a response, even if it's a 429 after max retries)
+            Response object. Always returns a response (never None), even if 
+            it's a 429 after exhausting all retries.
             
         Raises:
-            requests.exceptions.RequestException: For network errors (not retried)
+            requests.exceptions.RequestException: For network errors that are not 
+                retried (e.g., ConnectionError, Timeout, SSLError, InvalidURL, etc.).
+                These are raised immediately and handled by calling code.
         """
         delay = self.INITIAL_RETRY_DELAY
         
@@ -73,8 +80,9 @@ class CitationVerifier:
                 return response
                 
             except requests.exceptions.RequestException:
-                # For network errors, raise immediately without retrying
-                # These are handled by the calling code
+                # For network errors (ConnectionError, Timeout, SSLError, etc.),
+                # raise immediately without retrying. These represent connectivity
+                # issues that won't be fixed by waiting and are handled by calling code.
                 raise
 
     def verify_citation(self, entry: Dict) -> Dict:
