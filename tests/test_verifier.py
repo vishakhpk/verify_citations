@@ -293,5 +293,197 @@ def test_exact_issue_scenario():
     assert verifier._titles_similar(bibtex_title, online_title), "Titles should be considered similar"
 
 
+def test_parse_google_scholar_first_result_basic():
+    """Test parsing Google Scholar HTML with basic structure."""
+    verifier = CitationVerifier()
+    
+    # Minimal Google Scholar HTML with first result
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_r gs_or">
+            <h3 class="gs_rt">
+                <a href="https://example.com/paper.pdf">Attention is All You Need</a>
+            </h3>
+            <div class="gs_a">
+                A Vaswani, N Shazeer, N Parmar - Conference, 2017 - arxiv.org
+            </div>
+        </div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    assert title == "Attention is All You Need"
+    assert authors is not None
+    assert len(authors) == 3
+    assert "A Vaswani" in authors
+    assert "N Shazeer" in authors
+    assert "N Parmar" in authors
+
+
+def test_parse_google_scholar_first_result_with_prefix():
+    """Test parsing Google Scholar HTML with [PDF] or [HTML] prefix."""
+    verifier = CitationVerifier()
+    
+    # Google Scholar HTML with [PDF] prefix
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_r gs_or">
+            <h3 class="gs_rt">
+                <a href="https://example.com/paper.pdf">[PDF] Attention is All You Need</a>
+            </h3>
+            <div class="gs_a">
+                A Vaswani, N Shazeer - Conference, 2017 - arxiv.org
+            </div>
+        </div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    # Title should have [PDF] prefix removed
+    assert title == "Attention is All You Need"
+    assert authors is not None
+    assert len(authors) == 2
+
+
+def test_parse_google_scholar_first_result_with_ellipsis():
+    """Test parsing Google Scholar HTML with ellipsis in authors."""
+    verifier = CitationVerifier()
+    
+    # Google Scholar HTML with ellipsis (indicating more authors)
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_r gs_or">
+            <h3 class="gs_rt">
+                <a href="https://example.com/paper.pdf">BERT: Pre-training of Deep Bidirectional Transformers</a>
+            </h3>
+            <div class="gs_a">
+                J Devlin, MW Chang, K Lee, K Toutanova… - arXiv preprint, 2018 - arxiv.org
+            </div>
+        </div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    assert title == "BERT: Pre-training of Deep Bidirectional Transformers"
+    assert authors is not None
+    # Ellipsis should be removed
+    assert len(authors) == 4
+    assert "K Toutanova" in authors
+    # Ellipsis character should not be in last author name
+    assert not any('…' in author for author in authors)
+
+
+def test_parse_google_scholar_first_result_no_anchor():
+    """Test parsing Google Scholar HTML when title has no anchor tag."""
+    verifier = CitationVerifier()
+    
+    # Some results may not have clickable links
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_r gs_or">
+            <h3 class="gs_rt">
+                [CITATION] Some Non-Clickable Paper
+            </h3>
+            <div class="gs_a">
+                J Smith, A Jones - Journal, 2020 - publisher.com
+            </div>
+        </div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    # Should still extract title even without anchor, and remove [CITATION] prefix
+    assert title == "Some Non-Clickable Paper"
+    assert authors is not None
+    assert len(authors) == 2
+
+
+def test_parse_google_scholar_first_result_fallback_to_gs_r():
+    """Test parsing Google Scholar HTML with fallback to gs_r class."""
+    verifier = CitationVerifier()
+    
+    # Use gs_r instead of gs_r gs_or
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_r">
+            <h3 class="gs_rt">
+                <a href="https://example.com/paper.pdf">Test Paper Title</a>
+            </h3>
+            <div class="gs_a">
+                A Author, B Writer - Conference, 2021 - example.com
+            </div>
+        </div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    assert title == "Test Paper Title"
+    assert authors is not None
+    assert len(authors) == 2
+
+
+def test_parse_google_scholar_first_result_no_container():
+    """Test parsing Google Scholar HTML when container is missing."""
+    verifier = CitationVerifier()
+    
+    # Missing gs_res_ccl_mid container
+    html = """
+    <div>
+        <div class="gs_r gs_or">
+            <h3 class="gs_rt">
+                <a href="https://example.com/paper.pdf">Test Paper</a>
+            </h3>
+        </div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    # Should return None when container is missing
+    assert title is None
+    assert authors is None
+
+
+def test_parse_google_scholar_first_result_no_result():
+    """Test parsing Google Scholar HTML when no results are present."""
+    verifier = CitationVerifier()
+    
+    # Container exists but no results
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_no_results">No results found</div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    # Should return None when no results found
+    assert title is None
+    assert authors is None
+
+
+def test_parse_google_scholar_first_result_malformed_html():
+    """Test parsing Google Scholar HTML when HTML is malformed."""
+    verifier = CitationVerifier()
+    
+    # Malformed or incomplete HTML
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_r gs_or">
+            <h3 class="gs_rt">
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    # Should handle gracefully and return None or empty string
+    assert title is None or title == ""
+    assert authors is None
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
