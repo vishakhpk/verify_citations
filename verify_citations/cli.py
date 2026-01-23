@@ -13,7 +13,7 @@ from .verifier import CitationVerifier
 
 
 @click.command()
-@click.argument('bibtex_file', required=False, default='references.bib', type=click.Path())
+@click.option('--bibtex-file', default='references.bib', type=click.Path(), help='BibTeX file to verify (default: references.bib)')
 @click.option('--timeout', default=10, help='Request timeout in seconds')
 @click.option('--max-retries', default=3, help='Maximum retries for 429 rate limit errors')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output')
@@ -29,9 +29,9 @@ def main(bibtex_file, timeout, max_retries, verbose, summary_only):
     4. Identifying version information (arXiv, published, etc.)
     
     Example:
-        verify-citations references.bib
-        verify-citations references.bib --verbose
-        verify-citations references.bib --max-retries 5
+        verify-citations --bibtex-file references.bib
+        verify-citations --bibtex-file sample.bib --verbose
+        verify-citations --max-retries 5
         verify-citations (uses default references.bib)
     """
     # Initialize colorama for cross-platform colored output
