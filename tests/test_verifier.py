@@ -773,5 +773,75 @@ def test_verbose_logging_for_semantic_scholar_authors():
         assert 'Similarity' in log_text or 'Match' in log_text or 'Result' in log_text
 
 
+def test_sotopia_pi_paper_google_scholar():
+    """Test parsing Google Scholar HTML for SOTOPIA-π paper with special LaTeX characters."""
+    verifier = CitationVerifier()
+    
+    # Simulated Google Scholar HTML response for the SOTOPIA-π paper
+    # This tests handling of LaTeX math notation ($\pi$) in titles
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_r gs_or gs_scl">
+            <h3 class="gs_rt">
+                <a href="https://aclanthology.org/2024.acl-long.697/">SOTOPIA-π: Interactive Learning of Socially Intelligent Language Agents</a>
+            </h3>
+            <div class="gs_a">R Wang, H Yu, W Zhang, Z Qi, M Sap, Y Bisk, G Neubig, H Zhu - Proceedings of the 62nd Annual …, 2024 - aclanthology.org</div>
+            <div class="gs_rs">We present SOTOPIA-π, an interactive learning method for language agents...</div>
+        </div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    # Verify title extraction - Note: LaTeX $\pi$ may not appear in the parsed HTML
+    # Google Scholar typically shows the rendered version without LaTeX
+    assert title is not None
+    assert "SOTOPIA" in title
+    assert "Interactive Learning of Socially Intelligent Language Agents" in title
+    
+    # Verify author extraction
+    assert authors is not None
+    assert len(authors) >= 8  # Should extract all 8 authors
+    
+    # Check key authors are present
+    author_str = ', '.join(authors).lower()
+    assert 'wang' in author_str or 'r wang' in author_str
+    assert 'yu' in author_str or 'h yu' in author_str
+    assert 'zhang' in author_str or 'w zhang' in author_str
+    assert 'neubig' in author_str or 'g neubig' in author_str
+    assert 'zhu' in author_str or 'h zhu' in author_str
+    
+    # Verify title matching would work
+    # BibTeX title has LaTeX notation: SOTOPIA-$\pi$
+    bibtex_title = "SOTOPIA-$\\pi$: Interactive Learning of Socially Intelligent Language Agents"
+    # After removing curly braces and LaTeX, we need to check similarity
+    cleaned_bibtex_title = verifier._remove_curly_braces(bibtex_title).lower()
+    
+    # The title similarity should be high even with LaTeX differences
+    similarity = verifier._calculate_title_similarity(cleaned_bibtex_title, title.lower())
+    assert similarity >= verifier.TITLE_MATCH_THRESHOLD, \
+        f"Title similarity {similarity:.2%} should be >= {verifier.TITLE_MATCH_THRESHOLD:.2%}"
+    
+    # Verify author matching would work
+    bibtex_authors = "Wang, Ruiyi and Yu, Haofei and Zhang, Wenxin and Qi, Zhengyang and Sap, Maarten and Bisk, Yonatan and Neubig, Graham and Zhu, Hao"
+    bibtex_author_names = verifier._extract_author_names(bibtex_authors)
+    online_author_names = verifier._extract_author_names(', '.join(authors))
+    
+    # Check that key authors are in both lists
+    assert 'wang' in bibtex_author_names
+    assert 'neubig' in bibtex_author_names
+    assert 'zhu' in bibtex_author_names
+    
+    # At least some authors should be in the online list
+    # (Google Scholar may abbreviate or format differently)
+    matching_authors = sum(1 for name in bibtex_author_names if name in online_author_names)
+    assert matching_authors >= 4, f"At least 4 authors should match, found {matching_authors}"
+    
+    # Calculate author similarity
+    author_similarity = verifier._calculate_author_similarity(bibtex_author_names, online_author_names)
+    assert author_similarity >= 0.5, \
+        f"Author similarity {author_similarity:.2%} should be >= 50%"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
