@@ -618,7 +618,7 @@ class CitationVerifier:
                         return result, message, (None if result else details), verbose_logs
             
             # Check Google Scholar metadata
-            elif 'scholar.google.com' in search_url:
+            elif parsed_url.netloc == 'scholar.google.com' or parsed_url.netloc.endswith('.scholar.google.com'):
                 response = self.session.get(search_url, timeout=self.timeout)
                 if response.status_code == 200:
                     # Parse HTML to extract first result title and authors
