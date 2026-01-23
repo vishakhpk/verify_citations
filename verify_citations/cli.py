@@ -13,7 +13,7 @@ from .verifier import CitationVerifier
 
 
 @click.command()
-@click.argument('bibtex_file', type=click.Path(exists=True))
+@click.argument('bibtex_file', required=False, default='references.bib', type=click.Path(exists=True))
 @click.option('--timeout', default=10, help='Request timeout in seconds')
 @click.option('--max-retries', default=3, help='Maximum retries for 429 rate limit errors')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output')
@@ -32,6 +32,7 @@ def main(bibtex_file, timeout, max_retries, verbose, summary_only):
         verify-citations references.bib
         verify-citations references.bib --verbose
         verify-citations references.bib --max-retries 5
+        verify-citations (uses default references.bib)
     """
     # Initialize colorama for cross-platform colored output
     init(autoreset=True)

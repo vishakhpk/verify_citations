@@ -63,6 +63,7 @@ pip install -e .
 
 ```bash
 verify-citations path/to/references.bib
+verify-citations                            # Uses default references.bib
 ```
 
 ### Options
@@ -72,6 +73,7 @@ verify-citations references.bib --verbose         # Show detailed output
 verify-citations references.bib --summary-only    # Show only summary
 verify-citations references.bib --timeout 20      # Set request timeout
 verify-citations references.bib --max-retries 5   # Set max retries for 429 errors
+verify-citations --timeout 20 --max-retries 5     # Uses default references.bib with custom options
 ```
 
 ### Example Output
