@@ -368,7 +368,7 @@ class CitationVerifier:
             if response.status_code == 200:
                 verbose_logs.append(f"    Response status: 200 OK")
                 # Parse HTML to extract first result title and authors
-                parsed_title, parsed_authors = self._parse_google_scholar_first_result(response.text)
+                parsed_title, parsed_authors = self._parse_google_scholar_first_result(response.text, verbose_logs)
                 
                 if parsed_title:
                     verbose_logs.append(f"    Extracted title from first result: '{parsed_title}'")
@@ -795,7 +795,7 @@ class CitationVerifier:
                 if response.status_code == 200:
                     verbose_logs.append(f"    Response status: 200 OK")
                     # Parse HTML to extract first result title and authors
-                    parsed_title, parsed_authors = self._parse_google_scholar_first_result(response.text)
+                    parsed_title, parsed_authors = self._parse_google_scholar_first_result(response.text, verbose_logs)
                     
                     if not parsed_title:
                         verbose_logs.append(f"    ✗ Could not extract title from Google Scholar results")
@@ -977,23 +977,32 @@ class CitationVerifier:
         """
         return text.replace('{', '').replace('}', '')
     
-    def _parse_google_scholar_first_result(self, html_content: str) -> Tuple[Optional[str], Optional[List[str]]]:
+    def _parse_google_scholar_first_result(self, html_content: str, verbose_logs: Optional[List[str]] = None) -> Tuple[Optional[str], Optional[List[str]]]:
         """
         Parse Google Scholar HTML to extract title and authors from the first search result.
         
         Args:
             html_content: HTML content from Google Scholar search
+            verbose_logs: Optional list to append verbose parsing logs to
             
         Returns:
             Tuple of (title, authors_list) where both can be None if parsing fails
         """
         try:
+            if verbose_logs is not None:
+                verbose_logs.append("  Parsing Google Scholar HTML response")
+            
             soup = BeautifulSoup(html_content, 'html.parser')
             
             # Find the main results container
             results_container = soup.find('div', id='gs_res_ccl_mid')
             if not results_container:
+                if verbose_logs is not None:
+                    verbose_logs.append("    ✗ Could not find results container (div#gs_res_ccl_mid)")
                 return None, None
+            
+            if verbose_logs is not None:
+                verbose_logs.append("    ✓ Found results container")
             
             # Find the first result - prefer gs_r gs_or, fallback to gs_r
             first_result = results_container.find('div', class_='gs_r gs_or')
@@ -1001,28 +1010,52 @@ class CitationVerifier:
                 first_result = results_container.find('div', class_='gs_r')
             
             if not first_result:
+                if verbose_logs is not None:
+                    verbose_logs.append("    ✗ Could not find first result element")
                 return None, None
+            
+            if verbose_logs is not None:
+                verbose_logs.append("    ✓ Found first result element")
             
             # Extract title
             title = None
             title_elem = first_result.find(class_='gs_rt')
             if title_elem:
+                if verbose_logs is not None:
+                    verbose_logs.append("    ✓ Found title element (.gs_rt)")
+                
                 # Prefer anchor tag if it exists
                 title_link = title_elem.find('a')
                 if title_link:
                     title_text = title_link.get_text(strip=True)
+                    if verbose_logs is not None:
+                        verbose_logs.append(f"      Raw title from link: '{title_text}'")
                 else:
                     title_text = title_elem.get_text(strip=True)
+                    if verbose_logs is not None:
+                        verbose_logs.append(f"      Raw title from element: '{title_text}'")
                 
                 # Clean the title - remove leading bracketed labels like [PDF], [HTML], [C], [CITATION]
                 # Using specific pattern to avoid removing other brackets
                 title = re.sub(r'^\s*\[(PDF|HTML|C|CITATION|BOOK)\]\s*', '', title_text, flags=re.IGNORECASE)
+                
+                if title != title_text and verbose_logs is not None:
+                    verbose_logs.append(f"      Cleaned title (removed prefix): '{title}'")
+                
+                if verbose_logs is not None:
+                    verbose_logs.append(f"    ✓ Extracted title: '{title}'")
+            else:
+                if verbose_logs is not None:
+                    verbose_logs.append("    ✗ Could not find title element (.gs_rt)")
             
             # Extract authors
             authors_list = None
             authors_elem = first_result.find(class_='gs_a')
             if authors_elem:
                 authors_text = authors_elem.get_text(strip=True)
+                if verbose_logs is not None:
+                    verbose_logs.append("    ✓ Found authors element (.gs_a)")
+                    verbose_logs.append(f"      Raw authors text: '{authors_text}'")
                 
                 # Split on the first dash separator to separate authors from venue/year
                 # Using regex to handle non-breaking spaces and other whitespace variations
@@ -1030,16 +1063,47 @@ class CitationVerifier:
                 if parts:
                     authors_part = parts[0]
                     
+                    if verbose_logs is not None and len(parts) > 1:
+                        verbose_logs.append(f"      Authors part (before dash): '{authors_part}'")
+                        verbose_logs.append(f"      Venue/year part (after dash): '{parts[1]}'")
+                    
                     # Remove trailing ellipsis if present (both Unicode and ASCII variants)
+                    original_authors_part = authors_part
                     authors_part = authors_part.rstrip('…...').strip()
+                    
+                    if verbose_logs is not None and original_authors_part != authors_part:
+                        verbose_logs.append(f"      Authors (ellipsis removed): '{authors_part}'")
                     
                     # Split by commas to get individual authors
                     if authors_part:
                         authors_list = [name.strip() for name in authors_part.split(',') if name.strip()]
+                        if verbose_logs is not None:
+                            verbose_logs.append(f"    ✓ Extracted {len(authors_list)} author(s): {', '.join(authors_list)}")
+                    else:
+                        if verbose_logs is not None:
+                            verbose_logs.append("    ✗ Authors part is empty after processing")
+                else:
+                    if verbose_logs is not None:
+                        verbose_logs.append("    ✗ Could not split authors text")
+            else:
+                if verbose_logs is not None:
+                    verbose_logs.append("    ✗ Could not find authors element (.gs_a)")
+            
+            if verbose_logs is not None:
+                if title and authors_list:
+                    verbose_logs.append(f"  ✓ Successfully parsed: title + {len(authors_list)} authors")
+                elif title:
+                    verbose_logs.append("  ⚠ Partially parsed: title only (no authors)")
+                elif authors_list:
+                    verbose_logs.append(f"  ⚠ Partially parsed: {len(authors_list)} authors only (no title)")
+                else:
+                    verbose_logs.append("  ✗ Parsing failed: no title or authors extracted")
             
             return title, authors_list
             
-        except Exception:
+        except Exception as e:
+            if verbose_logs is not None:
+                verbose_logs.append(f"  ✗ Exception during parsing: {type(e).__name__}: {str(e)}")
             return None, None
     
     def _calculate_title_similarity(self, title1: str, title2: str) -> float:
