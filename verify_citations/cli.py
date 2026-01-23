@@ -15,9 +15,10 @@ from .verifier import CitationVerifier
 @click.command()
 @click.argument('bibtex_file', type=click.Path(exists=True))
 @click.option('--timeout', default=10, help='Request timeout in seconds')
+@click.option('--max-retries', default=3, help='Maximum retries for 429 rate limit errors')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output')
 @click.option('--summary-only', '-s', is_flag=True, help='Show only summary')
-def main(bibtex_file, timeout, verbose, summary_only):
+def main(bibtex_file, timeout, max_retries, verbose, summary_only):
     """
     Verify citations in a BibTeX file.
     
@@ -30,6 +31,7 @@ def main(bibtex_file, timeout, verbose, summary_only):
     Example:
         verify-citations references.bib
         verify-citations references.bib --verbose
+        verify-citations references.bib --max-retries 5
     """
     # Initialize colorama for cross-platform colored output
     init(autoreset=True)
@@ -47,7 +49,7 @@ def main(bibtex_file, timeout, verbose, summary_only):
             return
         
         # Verify each citation
-        verifier = CitationVerifier(timeout=timeout)
+        verifier = CitationVerifier(timeout=timeout, max_retries=max_retries)
         results = []
         
         for i, entry in enumerate(entries, 1):

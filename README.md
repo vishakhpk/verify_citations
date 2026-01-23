@@ -13,11 +13,13 @@ This tool performs automated checks to verify citations:
    - **DBLP**: Computer science bibliography
    - **Google Scholar**: Broad scholarly articles search
    - **DuckDuckGo**: General web search as fallback
+   - **Rate limit resilience**: Automatic retry with exponential backoff when APIs return 429 errors, with fallback to alternative sources
 
 2. **URL Validation**: Verifies that provided links are correct and accessible
    - Handles HTTP status codes with appropriate error reporting
+   - **429 Rate Limit handling**: Automatically retries with exponential backoff (1s → 2s → 4s, up to 3 retries) before moving to alternative sources
    - **403 Forbidden handling**: Recognizes when servers block automated access and flags for manual verification
-   - Distinguishes between critical errors (404) and warnings (403, connection issues)
+   - Distinguishes between critical errors (404) and warnings (403, 429, connection issues)
    - Supports automatic conversion of arXiv IDs to full URLs
 
 3. **Metadata Verification**: Checks if both the title AND author list match what's found online
@@ -66,9 +68,10 @@ verify-citations path/to/references.bib
 ### Options
 
 ```bash
-verify-citations references.bib --verbose        # Show detailed output
-verify-citations references.bib --summary-only   # Show only summary
-verify-citations references.bib --timeout 20     # Set request timeout
+verify-citations references.bib --verbose         # Show detailed output
+verify-citations references.bib --summary-only    # Show only summary
+verify-citations references.bib --timeout 20      # Set request timeout
+verify-citations references.bib --max-retries 5   # Set max retries for 429 errors
 ```
 
 ### Example Output
@@ -151,7 +154,8 @@ The tool:
   - **DuckDuckGo**: General web search fallback
 - Validates URLs by making HTTP requests
   - Handles HEAD requests with GET fallback
-  - Distinguishes critical errors (404, invalid format) from warnings (403, timeouts)
+  - **Automatic retry on rate limits**: Retries with exponential backoff (1s, 2s, 4s) when encountering 429 errors
+  - Distinguishes critical errors (404, invalid format) from warnings (403, 429, timeouts)
 - Extracts and compares both title AND author metadata from online sources
   - Uses word-overlap similarity for title matching (50% for findability, 70% for metadata verification)
   - Compares author last names with fuzzy matching to detect mismatches
