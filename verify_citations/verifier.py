@@ -3,6 +3,7 @@ Core citation verification logic.
 """
 
 import re
+import time
 from difflib import SequenceMatcher
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, quote_plus
@@ -18,6 +19,11 @@ class CitationVerifier:
     MIN_WORD_LENGTH = 3  # Minimum word length to consider in matching
     TITLE_MATCH_THRESHOLD = 0.5  # Minimum fraction of title words to match for findability
     METADATA_SIMILARITY_THRESHOLD = 0.7  # Minimum word overlap for metadata verification
+    
+    # Constants for retry logic
+    MAX_RETRIES = 3  # Maximum number of retries for 429 errors
+    INITIAL_RETRY_DELAY = 1  # Initial delay in seconds before retrying
+    MAX_RETRY_DELAY = 60  # Maximum delay between retries in seconds
 
     def __init__(self, timeout: int = 10):
         """
@@ -31,6 +37,48 @@ class CitationVerifier:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
+    
+    def _make_request_with_retry(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
+        """
+        Make an HTTP request with retry logic for 429 errors.
+        
+        Args:
+            method: HTTP method ('get', 'head', 'post', etc.)
+            url: URL to request
+            **kwargs: Additional arguments to pass to the request method
+            
+        Returns:
+            Response object if successful, None if all retries failed
+        """
+        delay = self.INITIAL_RETRY_DELAY
+        
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                # Make the request
+                response = getattr(self.session, method)(url, **kwargs)
+                
+                # If we get a 429, retry with exponential backoff
+                if response.status_code == 429:
+                    if attempt < self.MAX_RETRIES:
+                        # Wait before retrying
+                        time.sleep(delay)
+                        # Exponential backoff with cap
+                        delay = min(delay * 2, self.MAX_RETRY_DELAY)
+                        continue
+                    else:
+                        # Max retries reached, return the 429 response
+                        return response
+                
+                # For any other status code, return immediately
+                return response
+                
+            except requests.exceptions.RequestException:
+                # For network errors, raise immediately without retrying
+                # These are handled by the calling code
+                raise
+        
+        # This should never be reached, but return None as fallback
+        return None
 
     def verify_citation(self, entry: Dict) -> Dict:
         """
@@ -131,10 +179,12 @@ class CitationVerifier:
             verbose_logs.append(f"  Trying arXiv by ID: {arxiv_id}")
             try:
                 arxiv_url = f"https://arxiv.org/abs/{arxiv_id}"
-                response = self.session.get(arxiv_url, timeout=self.timeout)
+                response = self._make_request_with_retry('get', arxiv_url, timeout=self.timeout)
                 if response.status_code == 200:
                     verbose_logs.append(f"    ✓ Found on arXiv: {arxiv_url}")
                     return True, arxiv_url, verbose_logs
+                elif response.status_code == 429:
+                    verbose_logs.append(f"    ✗ arXiv rate limited (429) - trying alternative sources")
                 else:
                     verbose_logs.append(f"    ✗ arXiv returned status {response.status_code}")
             except Exception as e:
@@ -147,7 +197,7 @@ class CitationVerifier:
             # arXiv API search endpoint (using HTTPS)
             search_query = quote_plus(f'ti:"{title}"')
             arxiv_search_url = f"https://export.arxiv.org/api/query?search_query={search_query}&max_results=1"
-            response = self.session.get(arxiv_search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', arxiv_search_url, timeout=self.timeout)
             
             if response.status_code == 200:
                 # Parse XML response properly
@@ -181,6 +231,8 @@ class CitationVerifier:
                         verbose_logs.append(f"    ✗ No results found in arXiv search")
                 except ET.ParseError:
                     verbose_logs.append(f"    ✗ Failed to parse arXiv response")
+            elif response.status_code == 429:
+                verbose_logs.append(f"    ✗ arXiv rate limited (429) - trying alternative sources")
             else:
                 verbose_logs.append(f"    ✗ arXiv search returned status {response.status_code}")
         except Exception as e:
@@ -191,7 +243,7 @@ class CitationVerifier:
         try:
             # ACL Anthology search via their website
             acl_search_url = f"https://aclanthology.org/search/?q={quote_plus(title)}"
-            response = self.session.get(acl_search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', acl_search_url, timeout=self.timeout)
             
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
@@ -215,6 +267,8 @@ class CitationVerifier:
                             verbose_logs.append(f"    ✗ Title mismatch: '{found_title}'")
                 else:
                     verbose_logs.append(f"    ✗ No results found")
+            elif response.status_code == 429:
+                verbose_logs.append(f"    ✗ ACL Anthology rate limited (429) - trying alternative sources")
             else:
                 verbose_logs.append(f"    ✗ ACL Anthology returned status {response.status_code}")
         except Exception as e:
@@ -230,7 +284,7 @@ class CitationVerifier:
                 'limit': 1,
                 'fields': 'title,authors,url'
             }
-            response = self.session.get(api_url, params=params, timeout=self.timeout)
+            response = self._make_request_with_retry('get', api_url, params=params, timeout=self.timeout)
             
             if response.status_code == 200:
                 data = response.json()
@@ -249,6 +303,8 @@ class CitationVerifier:
                         verbose_logs.append(f"    ✗ Title mismatch: '{found_title}'")
                 else:
                     verbose_logs.append(f"    ✗ No results found")
+            elif response.status_code == 429:
+                verbose_logs.append(f"    ✗ Semantic Scholar rate limited (429) - trying alternative sources")
             else:
                 verbose_logs.append(f"    ✗ Semantic Scholar API returned status {response.status_code}")
         except Exception as e:
@@ -259,7 +315,7 @@ class CitationVerifier:
         try:
             # DBLP API search
             dblp_search_url = f"https://dblp.org/search/publ/api?q={quote_plus(title)}&format=json&h=1"
-            response = self.session.get(dblp_search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', dblp_search_url, timeout=self.timeout)
             
             if response.status_code == 200:
                 data = response.json()
@@ -277,6 +333,8 @@ class CitationVerifier:
                         verbose_logs.append(f"    ✗ Title mismatch: '{found_title}'")
                 else:
                     verbose_logs.append(f"    ✗ No results found")
+            elif response.status_code == 429:
+                verbose_logs.append(f"    ✗ DBLP rate limited (429) - trying alternative sources")
             else:
                 verbose_logs.append(f"    ✗ DBLP returned status {response.status_code}")
         except Exception as e:
@@ -290,7 +348,7 @@ class CitationVerifier:
             search_url = f"https://scholar.google.com/scholar?q={quote_plus(query)}"
             verbose_logs.append(f"    Query: {search_url}")
             
-            response = self.session.get(search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', search_url, timeout=self.timeout)
             
             if response.status_code == 200:
                 verbose_logs.append(f"    Response status: 200 OK")
@@ -315,6 +373,8 @@ class CitationVerifier:
                         verbose_logs.append(f"    ✗ Title similarity below threshold")
                 else:
                     verbose_logs.append(f"    ✗ Could not extract title from first result (no results or parsing failed)")
+            elif response.status_code == 429:
+                verbose_logs.append(f"    ✗ Google Scholar rate limited (429) - trying alternative sources")
             else:
                 verbose_logs.append(f"    ✗ Google Scholar returned status {response.status_code}")
         except Exception as e:
@@ -327,7 +387,7 @@ class CitationVerifier:
             query = f'"{title}" paper pdf'
             search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
             
-            response = self.session.get(search_url, timeout=self.timeout)
+            response = self._make_request_with_retry('get', search_url, timeout=self.timeout)
             
             if response.status_code == 200:
                 content = response.text.lower()
@@ -340,6 +400,8 @@ class CitationVerifier:
                     return True, search_url, verbose_logs
                 else:
                     verbose_logs.append(f"    ✗ Insufficient word matches: {matches}/{len(title_words)}")
+            elif response.status_code == 429:
+                verbose_logs.append(f"    ✗ DuckDuckGo rate limited (429) - no more alternative sources")
             else:
                 verbose_logs.append(f"    ✗ DuckDuckGo returned status {response.status_code}")
         except Exception as e:
@@ -356,7 +418,7 @@ class CitationVerifier:
             Tuple of (valid, message) where valid can be:
             - True: URL is accessible
             - False: URL has critical error (404, invalid format, etc.)
-            - None: Warning/transient state (403 - server blocking, connection errors)
+            - None: Warning/transient state (403, 429 - server blocking, connection errors)
         """
         try:
             # Handle arXiv eprint IDs - convert to full URL
@@ -368,16 +430,21 @@ class CitationVerifier:
                 else:
                     return False, f"✗ Invalid URL format: {url}"
             
-            response = self.session.head(url, timeout=self.timeout, allow_redirects=True)
+            response = self._make_request_with_retry('head', url, timeout=self.timeout, allow_redirects=True)
             if response.status_code == 200:
                 return True, f"✓ URL is valid and accessible: {url}"
+            elif response.status_code == 429:
+                # Rate limited even after retries - treat as transient warning
+                return None, f"⚠ URL returns 429 (Rate limited - too many requests): {url}"
             elif response.status_code == 403:
                 # 403 Forbidden - server is blocking automated access
                 # Try GET as fallback, but note the restriction
                 try:
-                    response = self.session.get(url, timeout=self.timeout)
+                    response = self._make_request_with_retry('get', url, timeout=self.timeout)
                     if response.status_code == 200:
                         return True, f"✓ URL is accessible (server restricts HEAD requests): {url}"
+                    elif response.status_code == 429:
+                        return None, f"⚠ URL returns 429 (Rate limited - too many requests): {url}"
                 except requests.exceptions.RequestException:
                     pass
                 return None, f"⚠ URL returns 403 (Forbidden - server blocks automated access): {url}"
@@ -385,9 +452,11 @@ class CitationVerifier:
                 return False, f"✗ URL returns 404 (not found): {url}"
             else:
                 # Try GET if HEAD fails
-                response = self.session.get(url, timeout=self.timeout)
+                response = self._make_request_with_retry('get', url, timeout=self.timeout)
                 if response.status_code == 200:
                     return True, f"✓ URL is valid and accessible: {url}"
+                elif response.status_code == 429:
+                    return None, f"⚠ URL returns 429 (Rate limited - too many requests): {url}"
                 elif response.status_code == 403:
                     return None, f"⚠ URL returns 403 (Forbidden - server blocks automated access): {url}"
                 return False, f"✗ URL returned status {response.status_code}: {url}"
@@ -421,7 +490,7 @@ class CitationVerifier:
             # Properly check if URL is from arxiv.org domain
             parsed_url = urlparse(search_url)
             if parsed_url.netloc == 'arxiv.org' or parsed_url.netloc.endswith('.arxiv.org'):
-                response = self.session.get(search_url, timeout=self.timeout)
+                response = self._make_request_with_retry('get', search_url, timeout=self.timeout)
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, 'html.parser')
                     
@@ -519,7 +588,7 @@ class CitationVerifier:
                     api_url = f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}"
                     params = {'fields': 'title,authors'}
                     
-                    response = self.session.get(api_url, params=params, timeout=self.timeout)
+                    response = self._make_request_with_retry('get', api_url, params=params, timeout=self.timeout)
                     if response.status_code == 200:
                         data = response.json()
                         online_title_original = data.get('title', '')
@@ -589,7 +658,7 @@ class CitationVerifier:
                 # Query DBLP using search API with the paper title (same approach as in _check_findable_online)
                 # This is more reliable than trying to parse the key from the URL
                 dblp_search_url = f"https://dblp.org/search/publ/api?q={quote_plus(title)}&format=json&h=1"
-                response = self.session.get(dblp_search_url, timeout=self.timeout)
+                response = self._make_request_with_retry('get', dblp_search_url, timeout=self.timeout)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -685,7 +754,7 @@ class CitationVerifier:
             # Check Google Scholar metadata
             elif parsed_url.netloc == 'scholar.google.com' or parsed_url.netloc.endswith('.scholar.google.com'):
                 verbose_logs.append(f"  Checking Google Scholar metadata from: {search_url}")
-                response = self.session.get(search_url, timeout=self.timeout)
+                response = self._make_request_with_retry('get', search_url, timeout=self.timeout)
                 if response.status_code == 200:
                     verbose_logs.append(f"    Response status: 200 OK")
                     # Parse HTML to extract first result title and authors

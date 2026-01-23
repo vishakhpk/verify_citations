@@ -559,5 +559,141 @@ def test_parse_google_scholar_tomasello_book():
     assert author_similarity >= 0.5, f"Author similarity {author_similarity} should be >= 0.5"
 
 
+def test_retry_on_429():
+    """Test that 429 errors trigger retry with exponential backoff."""
+    from unittest.mock import Mock, patch
+    import time
+    
+    verifier = CitationVerifier()
+    
+    # Mock response that returns 429 first time, then 200
+    mock_response_429 = Mock()
+    mock_response_429.status_code = 429
+    
+    mock_response_200 = Mock()
+    mock_response_200.status_code = 200
+    
+    with patch.object(verifier.session, 'get', side_effect=[mock_response_429, mock_response_200]) as mock_get:
+        with patch('time.sleep') as mock_sleep:
+            response = verifier._make_request_with_retry('get', 'https://example.com')
+            
+            # Should have called get twice
+            assert mock_get.call_count == 2
+            # Should have slept once (after first 429)
+            assert mock_sleep.call_count == 1
+            # Should have slept for initial delay
+            mock_sleep.assert_called_with(verifier.INITIAL_RETRY_DELAY)
+            # Final response should be 200
+            assert response.status_code == 200
+
+
+def test_max_retries_on_429():
+    """Test that max retries are respected for 429 errors."""
+    from unittest.mock import Mock, patch
+    
+    verifier = CitationVerifier()
+    
+    # Mock response that always returns 429
+    mock_response_429 = Mock()
+    mock_response_429.status_code = 429
+    
+    with patch.object(verifier.session, 'get', return_value=mock_response_429) as mock_get:
+        with patch('time.sleep') as mock_sleep:
+            response = verifier._make_request_with_retry('get', 'https://example.com')
+            
+            # Should have called get MAX_RETRIES + 1 times (initial + retries)
+            assert mock_get.call_count == verifier.MAX_RETRIES + 1
+            # Should have slept MAX_RETRIES times
+            assert mock_sleep.call_count == verifier.MAX_RETRIES
+            # Final response should still be 429
+            assert response.status_code == 429
+
+
+def test_exponential_backoff_on_429():
+    """Test that exponential backoff is used for 429 retries."""
+    from unittest.mock import Mock, patch
+    
+    verifier = CitationVerifier()
+    
+    # Mock response that always returns 429
+    mock_response_429 = Mock()
+    mock_response_429.status_code = 429
+    
+    with patch.object(verifier.session, 'get', return_value=mock_response_429) as mock_get:
+        with patch('time.sleep') as mock_sleep:
+            response = verifier._make_request_with_retry('get', 'https://example.com')
+            
+            # Check that sleep was called with increasing delays
+            sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
+            assert len(sleep_calls) == verifier.MAX_RETRIES
+            
+            # Verify exponential backoff
+            expected_delays = []
+            delay = verifier.INITIAL_RETRY_DELAY
+            for _ in range(verifier.MAX_RETRIES):
+                expected_delays.append(delay)
+                delay = min(delay * 2, verifier.MAX_RETRY_DELAY)
+            
+            assert sleep_calls == expected_delays
+
+
+def test_url_valid_handles_429():
+    """Test that _check_url_valid properly handles 429 errors."""
+    from unittest.mock import Mock, patch
+    
+    verifier = CitationVerifier()
+    
+    # Mock response that returns 429 after retries
+    mock_response_429 = Mock()
+    mock_response_429.status_code = 429
+    
+    with patch.object(verifier, '_make_request_with_retry', return_value=mock_response_429):
+        result, message = verifier._check_url_valid('https://example.com/paper.pdf')
+        
+        # Should return None (warning) for 429
+        assert result is None
+        assert '429' in message
+        assert 'Rate limited' in message
+
+
+def test_search_continues_after_429():
+    """Test that search continues to next source after 429."""
+    from unittest.mock import Mock, patch
+    
+    verifier = CitationVerifier()
+    
+    entry = {
+        'ID': 'test2023',
+        'title': 'Test Paper About Machine Learning',
+        'author': 'Smith, John',
+        'year': '2023'
+    }
+    
+    # Mock arxiv to return 429, but Semantic Scholar to succeed
+    mock_response_429 = Mock()
+    mock_response_429.status_code = 429
+    
+    mock_response_200 = Mock()
+    mock_response_200.status_code = 200
+    mock_response_200.json.return_value = {
+        'data': [{
+            'title': 'Test Paper About Machine Learning',
+            'paperId': 'abc123'
+        }]
+    }
+    
+    # First two calls (arXiv ID and search) return 429, third call (Semantic Scholar) succeeds
+    with patch.object(verifier, '_make_request_with_retry', 
+                      side_effect=[mock_response_429, mock_response_429, mock_response_200]):
+        findable, search_url, logs = verifier._check_findable_online(entry)
+        
+        # Should find the paper via alternative source
+        assert findable is True
+        assert 'semanticscholar.org' in search_url
+        # Logs should mention rate limiting
+        log_text = ' '.join(logs)
+        assert '429' in log_text or 'rate limited' in log_text.lower()
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
