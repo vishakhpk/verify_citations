@@ -14,7 +14,7 @@ from .verifier import CitationVerifier
 
 def validate_bibtex_file(ctx, param, value):
     """Validate that the BibTeX file exists."""
-    if value and not Path(value).exists():
+    if not Path(value).exists():
         raise click.BadParameter(
             f"File not found: {value}\n"
             f"Tip: Specify a BibTeX file or ensure 'references.bib' exists in the current directory"
@@ -23,7 +23,7 @@ def validate_bibtex_file(ctx, param, value):
 
 
 @click.command()
-@click.option('--bibtex-file', default='references.bib', type=click.Path(), 
+@click.option('--bibtex-file', default='references.bib', type=click.Path(),
               callback=validate_bibtex_file,
               help='BibTeX file to verify (default: references.bib)')
 @click.option('--timeout', default=10, help='Request timeout in seconds')
