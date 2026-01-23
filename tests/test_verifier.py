@@ -515,5 +515,49 @@ def test_parse_google_scholar_first_result_malformed_html():
     assert authors is None
 
 
+def test_parse_google_scholar_tomasello_book():
+    """Test parsing Google Scholar HTML for the Tomasello book entry (real use case)."""
+    verifier = CitationVerifier()
+    
+    # Real-world example: Book entry with [BOOK] prefix
+    html = """
+    <div id="gs_res_ccl_mid">
+        <div class="gs_r gs_or gs_scl">
+            <h3 class="gs_rt">
+                <a href="https://books.google.com/books?id=example">[BOOK] Becoming human: A theory of ontogeny</a>
+            </h3>
+            <div class="gs_a">M Tomasello - 2019 - books.google.com</div>
+            <div class="gs_rs">This book weaves together findings from developmental psychology...</div>
+        </div>
+    </div>
+    """
+    
+    title, authors = verifier._parse_google_scholar_first_result(html)
+    
+    # Verify title extraction and [BOOK] prefix removal
+    assert title == "Becoming human: A theory of ontogeny"
+    
+    # Verify author extraction
+    assert authors is not None
+    assert len(authors) == 1
+    assert "M Tomasello" in authors
+    
+    # Verify title matching would work
+    bibtex_title = "Becoming human: A theory of ontogeny"
+    similarity = verifier._calculate_title_similarity(bibtex_title.lower(), title.lower())
+    assert similarity >= verifier.TITLE_MATCH_THRESHOLD, f"Title similarity {similarity} should be >= {verifier.TITLE_MATCH_THRESHOLD}"
+    
+    # Verify author matching would work
+    bibtex_author = "Tomasello, Michael"
+    bibtex_author_names = verifier._extract_author_names(bibtex_author)
+    online_author_names = verifier._extract_author_names(', '.join(authors))
+    
+    assert 'tomasello' in bibtex_author_names
+    assert 'tomasello' in online_author_names
+    
+    author_similarity = verifier._calculate_author_similarity(bibtex_author_names, online_author_names)
+    assert author_similarity >= 0.5, f"Author similarity {author_similarity} should be >= 0.5"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
