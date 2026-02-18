@@ -25,16 +25,18 @@ class CitationVerifier:
     INITIAL_RETRY_DELAY = 1  # Initial delay in seconds before retrying
     MAX_RETRY_DELAY = 60  # Maximum delay between retries in seconds
 
-    def __init__(self, timeout: int = 10, max_retries: int = None):
+    def __init__(self, timeout: int = 10, max_retries: int = None, crossref_mailto: str = ""):
         """
         Initialize the citation verifier.
-        
+
         Args:
             timeout: Request timeout in seconds
             max_retries: Maximum number of retries for 429 errors (default: 3)
+            crossref_mailto: Email address for CrossRef polite pool (improves rate limits)
         """
         self.timeout = timeout
         self.max_retries = max_retries if max_retries is not None else self.DEFAULT_MAX_RETRIES
+        self.crossref_mailto = crossref_mailto
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -115,6 +117,7 @@ class CitationVerifier:
                 'findable_online': None,
                 'url_valid': None,
                 'metadata_correct': None,
+                'doi_correct': None,
                 'version_info': None,
             },
             'messages': [],
@@ -159,6 +162,16 @@ class CitationVerifier:
                 result['metadata_details'] = metadata_details
             if verbose_logs:
                 result['verbose_logs'].extend(verbose_logs)
+
+        # Check 3b: DOI verification via CrossRef
+        if entry.get('doi', ''):
+            doi_correct, doi_msg, doi_details, doi_verbose_logs = self._check_doi_crossref(entry)
+            result['checks']['doi_correct'] = doi_correct
+            result['messages'].append(doi_msg)
+            if doi_details:
+                result['doi_details'] = doi_details
+            if doi_verbose_logs:
+                result['verbose_logs'].extend(doi_verbose_logs)
 
         # Check 4: Version information (arXiv, published, etc.)
         version_info = self._check_version_info(entry)
@@ -1263,6 +1276,149 @@ class CitationVerifier:
                 return False, msg
         
         return None, "- Could not verify metadata automatically"
+
+    def _check_doi_crossref(self, entry: Dict) -> Tuple[Optional[bool], str, Optional[Dict], List[str]]:
+        """
+        Verify DOI via CrossRef API.
+
+        Resolves the DOI at https://api.crossref.org/works/{doi} and compares
+        the returned metadata (title, year, volume, journal) against the BibTeX
+        entry.  Follows the same retry/rate-limit handling as other checks.
+
+        Returns:
+            Tuple of (correct, message, details_dict, verbose_logs)
+            - correct=True  : DOI resolved and all checked fields match
+            - correct=False : DOI not found, or one or more fields mismatch
+            - correct=None  : DOI could not be verified (network error, rate limit,
+                              or missing data for comparison)
+        """
+        verbose_logs = []
+        doi = self._remove_curly_braces(entry.get('doi', '')).strip()
+
+        verbose_logs.append(f"  Checking DOI via CrossRef: {doi}")
+
+        url = f"https://api.crossref.org/works/{doi}"
+        if self.crossref_mailto:
+            url += f"?mailto={self.crossref_mailto}"
+
+        try:
+            response = self._make_request_with_retry('get', url, verbose_logs, timeout=self.timeout)
+
+            if response.status_code == 404:
+                verbose_logs.append("    ✗ DOI not found in CrossRef")
+                return False, "✗ DOI not found in CrossRef (may be invalid)", None, verbose_logs
+
+            if response.status_code == 429:
+                verbose_logs.append("    ✗ CrossRef rate limited")
+                return None, "- CrossRef rate limited, DOI not verified", None, verbose_logs
+
+            if response.status_code != 200:
+                verbose_logs.append(f"    ✗ CrossRef returned status {response.status_code}")
+                return None, f"- CrossRef returned status {response.status_code}", None, verbose_logs
+
+            cr_message = response.json().get('message', {})
+
+            # --- Title comparison ---
+            bibtex_title = self._remove_curly_braces(entry.get('title', ''))
+            cr_titles = cr_message.get('title', [])
+            cr_title = cr_titles[0] if cr_titles else ''
+
+            verbose_logs.append("  Comparing titles:")
+            verbose_logs.append(f"    BibTeX:   {bibtex_title}")
+            verbose_logs.append(f"    CrossRef: {cr_title}")
+
+            title_match = None
+            if bibtex_title and cr_title:
+                similarity = SequenceMatcher(
+                    None, bibtex_title.lower(), cr_title.lower()
+                ).ratio()
+                verbose_logs.append(
+                    f"    Similarity: {similarity:.2%}, Threshold: {self.TITLE_MATCH_THRESHOLD:.2%}"
+                )
+                title_match = similarity >= self.TITLE_MATCH_THRESHOLD
+                verbose_logs.append(f"    Result: {'✓ Match' if title_match else '✗ Mismatch'}")
+
+            mismatches = []
+            if title_match is False:
+                mismatches.append(('title', bibtex_title, cr_title))
+
+            # --- Year comparison ---
+            bibtex_year = self._remove_curly_braces(entry.get('year', '')).strip()
+            if bibtex_year:
+                cr_year = None
+                for date_field in ('published', 'published-print', 'issued'):
+                    date_parts = cr_message.get(date_field, {}).get('date-parts', [])
+                    if date_parts and date_parts[0]:
+                        cr_year = str(date_parts[0][0])
+                        break
+                if cr_year:
+                    if bibtex_year != cr_year:
+                        verbose_logs.append(
+                            f"  Year mismatch: BibTeX={bibtex_year}, CrossRef={cr_year}"
+                        )
+                        mismatches.append(('year', bibtex_year, cr_year))
+                    else:
+                        verbose_logs.append(f"  Year: {bibtex_year} ✓")
+
+            # --- Volume comparison ---
+            bibtex_volume = self._remove_curly_braces(entry.get('volume', '')).strip()
+            if bibtex_volume:
+                cr_volume = cr_message.get('volume', '')
+                if cr_volume:
+                    if bibtex_volume != cr_volume:
+                        verbose_logs.append(
+                            f"  Volume mismatch: BibTeX={bibtex_volume}, CrossRef={cr_volume}"
+                        )
+                        mismatches.append(('volume', bibtex_volume, cr_volume))
+                    else:
+                        verbose_logs.append(f"  Volume: {bibtex_volume} ✓")
+
+            # --- Journal / booktitle comparison ---
+            bibtex_journal = self._remove_curly_braces(
+                entry.get('journal', '') or entry.get('booktitle', '')
+            ).strip()
+            if bibtex_journal:
+                cr_containers = cr_message.get('container-title', [])
+                cr_journal = cr_containers[0] if cr_containers else ''
+                if cr_journal:
+                    journal_similarity = SequenceMatcher(
+                        None, bibtex_journal.lower(), cr_journal.lower()
+                    ).ratio()
+                    if journal_similarity < self.TITLE_MATCH_THRESHOLD:
+                        verbose_logs.append(
+                            f"  Journal mismatch: BibTeX='{bibtex_journal}', CrossRef='{cr_journal}'"
+                        )
+                        mismatches.append(('journal', bibtex_journal, cr_journal))
+                    else:
+                        verbose_logs.append(
+                            f"  Journal: ✓ (similarity {journal_similarity:.2%})"
+                        )
+
+            # --- Build result ---
+            if mismatches:
+                details = {
+                    'doi': doi,
+                    'entry_title': bibtex_title,
+                    'crossref_title': cr_title,
+                    'title_match': title_match,
+                    'mismatches': mismatches,
+                }
+                parts = [
+                    f"{field}: BibTeX='{bib}' vs CrossRef='{cr}'"
+                    for field, bib, cr in mismatches
+                ]
+                msg = "⚠ CrossRef DOI mismatch(es):\n    " + "\n    ".join(parts)
+                return False, msg, details, verbose_logs
+
+            if title_match is True:
+                return True, "✓ DOI verified via CrossRef", None, verbose_logs
+
+            # DOI resolved but no title available on one side to compare
+            return None, "- CrossRef: DOI resolved but title comparison skipped", None, verbose_logs
+
+        except requests.exceptions.RequestException as e:
+            verbose_logs.append(f"  ✗ Error querying CrossRef: {str(e)}")
+            return None, f"- Could not verify DOI via CrossRef: {str(e)}", None, verbose_logs
 
     def _check_version_info(self, entry: Dict) -> Optional[str]:
         """

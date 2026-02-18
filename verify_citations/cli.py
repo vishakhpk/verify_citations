@@ -30,7 +30,8 @@ def validate_bibtex_file(ctx, param, value):
 @click.option('--max-retries', default=3, help='Maximum retries for 429 rate limit errors')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output')
 @click.option('--summary-only', '-s', is_flag=True, help='Show only summary')
-def main(bibtex_file, timeout, max_retries, verbose, summary_only):
+@click.option('--crossref-mailto', default='', help='Email for CrossRef polite pool (improves rate limits)')
+def main(bibtex_file, timeout, max_retries, verbose, summary_only, crossref_mailto):
     """
     Verify citations in a BibTeX file.
     
@@ -62,7 +63,7 @@ def main(bibtex_file, timeout, max_retries, verbose, summary_only):
             return
         
         # Verify each citation
-        verifier = CitationVerifier(timeout=timeout, max_retries=max_retries)
+        verifier = CitationVerifier(timeout=timeout, max_retries=max_retries, crossref_mailto=crossref_mailto)
         results = []
         
         for i, entry in enumerate(entries, 1):
@@ -171,6 +172,18 @@ def _print_summary(results: list):
         click.echo(f"Count: {len(citations_no_metadata_verification)}\n")
         for result in citations_no_metadata_verification:
             click.echo(f"- {result['id']}: {result['title']}")
+
+    # DOI verification via CrossRef
+    doi_checked = [r for r in results if r['checks'].get('doi_correct') is not None]
+    if doi_checked:
+        doi_ok = [r for r in doi_checked if r['checks']['doi_correct'] is True]
+        doi_bad = [r for r in doi_checked if r['checks']['doi_correct'] is False]
+        click.echo(f"\n{Fore.CYAN}DOI verification via CrossRef:{Style.RESET_ALL}")
+        click.echo(f"  Checked: {len(doi_checked)}, Verified: {len(doi_ok)}, Issues: {len(doi_bad)}")
+        if doi_bad:
+            click.echo(f"\n{Fore.YELLOW}Citations with DOI issues:{Style.RESET_ALL}")
+            for result in doi_bad:
+                click.echo(f"- {result['id']}: {result['title']}")
 
 
 if __name__ == '__main__':
