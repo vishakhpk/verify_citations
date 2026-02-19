@@ -203,7 +203,35 @@ class CitationVerifier:
             verbose_logs.append("  ✗ No title found in entry")
             return False, None, verbose_logs
 
-        # Try arXiv first by ID if available (most reliable)
+        # Try CrossRef DOI resolution first (most reliable when DOI is present)
+        doi = self._remove_curly_braces(entry.get('doi', '')).strip()
+        if doi and re.search(r'10\.\d{4,}/', doi):
+            verbose_logs.append(f"  Trying CrossRef DOI resolution: {doi}")
+            try:
+                crossref_api_url = f"https://api.crossref.org/works/{quote_plus(doi)}"
+                if self.crossref_mailto:
+                    crossref_api_url += f"?mailto={self.crossref_mailto}"
+                response = self._make_request_with_retry('get', crossref_api_url, verbose_logs, timeout=self.timeout)
+                if response.status_code == 200:
+                    cr_message = response.json().get('message', {})
+                    cr_titles = cr_message.get('title', [])
+                    cr_title = cr_titles[0] if cr_titles else ''
+                    if cr_title:
+                        doi_url = f"https://doi.org/{doi}"
+                        verbose_logs.append(f"    ✓ DOI resolved via CrossRef: {doi_url}")
+                        return True, doi_url, verbose_logs
+                    else:
+                        verbose_logs.append("    ✗ DOI resolved but no title in CrossRef metadata")
+                elif response.status_code == 429:
+                    verbose_logs.append("    ✗ CrossRef rate limited (429) - trying alternative sources")
+                elif response.status_code == 404:
+                    verbose_logs.append("    ✗ DOI not found in CrossRef")
+                else:
+                    verbose_logs.append(f"    ✗ CrossRef returned status {response.status_code}")
+            except Exception as e:
+                verbose_logs.append(f"    ✗ Error resolving DOI via CrossRef: {str(e)}")
+
+        # Try arXiv by ID if available
         arxiv_id = entry.get('eprint', '') or self._extract_arxiv_id(entry.get('url', ''))
         if arxiv_id:
             verbose_logs.append(f"  Trying arXiv by ID: {arxiv_id}")
@@ -517,9 +545,108 @@ class CitationVerifier:
         verbose_logs = []
         
         try:
-            # Properly check if URL is from arxiv.org domain
             parsed_url = urlparse(search_url)
-            if parsed_url.netloc == 'arxiv.org' or parsed_url.netloc.endswith('.arxiv.org'):
+
+            # Check CrossRef/DOI metadata (when paper was found via DOI resolution)
+            if parsed_url.netloc == 'doi.org':
+                doi_from_url = parsed_url.path.lstrip('/')
+                api_url = f"https://api.crossref.org/works/{quote_plus(doi_from_url)}"
+                if self.crossref_mailto:
+                    api_url += f"?mailto={self.crossref_mailto}"
+
+                response = self._make_request_with_retry('get', api_url, verbose_logs, timeout=self.timeout)
+                if response.status_code == 200:
+                    cr_message = response.json().get('message', {})
+
+                    # Check title
+                    cr_titles = cr_message.get('title', [])
+                    online_title_original = cr_titles[0] if cr_titles else ''
+                    online_title = online_title_original.lower() if online_title_original else ''
+
+                    title_match = None
+                    if online_title:
+                        verbose_logs.append(f"  Comparing titles:")
+                        verbose_logs.append(f"    BibTeX: {self._remove_curly_braces(entry.get('title', ''))}")
+                        verbose_logs.append(f"    Online: {online_title_original}")
+
+                        title_similarity = self._calculate_title_similarity(title, online_title)
+                        title_match = title_similarity >= self.METADATA_SIMILARITY_THRESHOLD
+
+                        verbose_logs.append(f"    Similarity: {title_similarity:.2%}, Threshold: {self.METADATA_SIMILARITY_THRESHOLD:.2%}")
+                        verbose_logs.append(f"    Result: {'✓ Match' if title_match else '✗ Mismatch'}")
+
+                    # Check authors
+                    author_match = None
+                    online_authors_original = None
+                    cr_authors = cr_message.get('author', [])
+                    if cr_authors and entry_authors:
+                        author_display = []
+                        online_author_names = []
+                        for auth in cr_authors:
+                            given = auth.get('given', '')
+                            family = auth.get('family', '')
+                            name = auth.get('name', '')  # Institutional authors
+                            if family:
+                                author_display.append(f"{given} {family}".strip())
+                                online_author_names.append(family.lower())
+                            elif name:
+                                author_display.append(name)
+                                words = name.lower().split()
+                                if words:
+                                    online_author_names.append(words[-1])
+                        online_authors_original = ', '.join(author_display)
+
+                        verbose_logs.append(f"  Comparing authors:")
+                        verbose_logs.append(f"    BibTeX: {entry_authors}")
+                        verbose_logs.append(f"    Online: {online_authors_original}")
+
+                        entry_author_names = self._extract_author_names(entry_authors)
+
+                        verbose_logs.append(f"    Extracted BibTeX authors ({len(entry_author_names)}): {', '.join(entry_author_names)}")
+                        verbose_logs.append(f"    Extracted online authors ({len(online_author_names)}): {', '.join(online_author_names)}")
+
+                        has_et_al = 'and others' in entry_authors.lower() or 'et al' in entry_authors.lower()
+
+                        if entry_author_names and online_author_names:
+                            if has_et_al:
+                                verbose_logs.append(f"    Note: BibTeX has 'and others' - checking if listed authors are complete")
+                                if len(entry_author_names) > len(online_author_names):
+                                    author_similarity = 0.0
+                                    verbose_logs.append(f"    ✗ BibTeX has more authors than online ({len(entry_author_names)} > {len(online_author_names)})")
+                                else:
+                                    matching = sum(1 for name in entry_author_names if name in online_author_names)
+                                    verbose_logs.append(f"    Matching authors: {matching}/{len(entry_author_names)}")
+                                    if matching == len(entry_author_names):
+                                        coverage = len(entry_author_names) / len(online_author_names)
+                                        verbose_logs.append(f"    Coverage: {coverage:.2%} of total authors")
+                                        author_similarity = coverage
+                                    else:
+                                        author_similarity = 0.0
+                                        verbose_logs.append(f"    ✗ Not all listed authors found online")
+                            else:
+                                author_similarity = self._calculate_author_similarity(entry_author_names, online_author_names)
+                                verbose_logs.append(f"    Similarity: {author_similarity:.2%}, Threshold: 50%")
+
+                            author_match = author_similarity >= 0.5
+                            verbose_logs.append(f"    Result: {'✓ Match' if author_match else '✗ Mismatch'}")
+
+                    # Build details dictionary
+                    details = {
+                        'entry_title': self._remove_curly_braces(entry.get('title', '')),
+                        'online_title': online_title_original,
+                        'entry_authors': entry_authors,
+                        'online_authors': online_authors_original,
+                        'source_url': search_url,
+                        'title_match': title_match,
+                        'author_match': author_match
+                    }
+
+                    # Format and return result
+                    result, message = self._format_metadata_result(title_match, author_match, details)
+                    return result, message, (None if result else details), verbose_logs
+
+            # Check if URL is from arxiv.org domain
+            elif parsed_url.netloc == 'arxiv.org' or parsed_url.netloc.endswith('.arxiv.org'):
                 response = self._make_request_with_retry('get', search_url, verbose_logs, timeout=self.timeout)
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, 'html.parser')

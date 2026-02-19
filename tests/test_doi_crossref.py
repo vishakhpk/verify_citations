@@ -366,6 +366,452 @@ class TestBogusDoiDetection:
         assert 'does not look like a valid DOI' not in msg
 
 
+class TestCrossrefDoiSearch:
+    """Tests for CrossRef DOI search in _check_findable_online."""
+
+    def test_doi_search_prioritized_first(self):
+        """CrossRef DOI search should be tried before arXiv and other sources."""
+        verifier = CitationVerifier()
+        entry = _make_entry()
+
+        cr_message = {
+            'title': ['Implicit-Explicit numerical schemes for jump-diffusion processes'],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp) as mock_req:
+            findable, url, logs = verifier._check_findable_online(entry)
+
+        assert findable is True
+        assert url == f"https://doi.org/{entry['doi']}"
+        # Should have only made one request (CrossRef), not fallen through to arXiv
+        assert mock_req.call_count == 1
+        called_url = mock_req.call_args[0][1]
+        assert 'api.crossref.org/works/' in called_url
+
+    def test_doi_search_returns_doi_org_url(self):
+        """Search URL should be a doi.org link when found via CrossRef."""
+        verifier = CitationVerifier()
+        entry = _make_entry(doi='10.2307/2951600')
+
+        cr_message = {'title': ['Stochastic differential utility']}
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            findable, url, logs = verifier._check_findable_online(entry)
+
+        assert findable is True
+        assert url == 'https://doi.org/10.2307/2951600'
+
+    def test_doi_search_falls_through_on_404(self):
+        """If DOI not found in CrossRef, should fall through to other sources."""
+        verifier = CitationVerifier()
+        entry = _make_entry()  # no eprint/url, so arXiv-by-ID is skipped
+
+        mock_404 = _make_crossref_response(404)
+        mock_200_semantic = Mock()
+        mock_200_semantic.status_code = 200
+        mock_200_semantic.json.return_value = {
+            'data': [{'title': 'Implicit-Explicit numerical schemes for jump-diffusion processes',
+                       'paperId': 'abc123'}]
+        }
+
+        # CrossRef 404 → arXiv title search 404 → ACL 404 → Semantic Scholar 200
+        with patch.object(verifier, '_make_request_with_retry',
+                          side_effect=[mock_404, mock_404, mock_404, mock_200_semantic]):
+            findable, url, logs = verifier._check_findable_online(entry)
+
+        assert findable is True
+        assert 'semanticscholar.org' in url
+
+    def test_doi_search_falls_through_on_429(self):
+        """If CrossRef rate limits, should fall through to other sources."""
+        verifier = CitationVerifier()
+        entry = _make_entry()  # no eprint/url, so arXiv-by-ID is skipped
+
+        mock_429 = _make_crossref_response(429)
+        mock_404 = _make_crossref_response(404)
+        mock_200_semantic = Mock()
+        mock_200_semantic.status_code = 200
+        mock_200_semantic.json.return_value = {
+            'data': [{'title': 'Implicit-Explicit numerical schemes for jump-diffusion processes',
+                       'paperId': 'abc123'}]
+        }
+
+        # CrossRef 429 → arXiv title search 404 → ACL 404 → Semantic Scholar 200
+        with patch.object(verifier, '_make_request_with_retry',
+                          side_effect=[mock_429, mock_404, mock_404, mock_200_semantic]):
+            findable, url, logs = verifier._check_findable_online(entry)
+
+        assert findable is True
+        log_text = ' '.join(logs)
+        assert '429' in log_text
+
+    def test_doi_search_skipped_for_invalid_doi(self):
+        """Entries with malformed DOIs should not try CrossRef search."""
+        verifier = CitationVerifier()
+        entry = _make_entry(doi='not-a-doi')
+
+        # Should not call CrossRef at all; will fall through to arXiv etc.
+        mock_404 = _make_crossref_response(404)
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_404) as mock_req:
+            verifier._check_findable_online(entry)
+
+        # First call should NOT be to crossref (should be arXiv)
+        if mock_req.call_count > 0:
+            first_url = mock_req.call_args_list[0][0][1]
+            assert 'crossref.org' not in first_url
+
+    def test_doi_search_skipped_when_no_doi(self):
+        """Entries without a DOI should skip CrossRef search."""
+        verifier = CitationVerifier()
+        entry = _make_entry()
+        del entry['doi']
+
+        mock_404 = _make_crossref_response(404)
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_404) as mock_req:
+            verifier._check_findable_online(entry)
+
+        if mock_req.call_count > 0:
+            first_url = mock_req.call_args_list[0][0][1]
+            assert 'crossref.org' not in first_url
+
+    def test_doi_search_uses_crossref_mailto(self):
+        """CrossRef DOI search should include mailto when configured."""
+        verifier = CitationVerifier(crossref_mailto='me@university.edu')
+        entry = _make_entry()
+
+        cr_message = {'title': ['Some paper']}
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp) as mock_req:
+            verifier._check_findable_online(entry)
+
+        called_url = mock_req.call_args_list[0][0][1]
+        assert 'mailto=me@university.edu' in called_url
+
+    def test_doi_search_handles_network_error(self):
+        """Network errors during CrossRef DOI search should fall through gracefully."""
+        verifier = CitationVerifier()
+        entry = _make_entry()  # no eprint/url, so arXiv-by-ID is skipped
+
+        mock_200_semantic = Mock()
+        mock_200_semantic.status_code = 200
+        mock_200_semantic.json.return_value = {
+            'data': [{'title': 'Implicit-Explicit numerical schemes for jump-diffusion processes',
+                       'paperId': 'abc123'}]
+        }
+
+        # CrossRef error → arXiv title search 404 → ACL 404 → Semantic Scholar 200
+        with patch.object(verifier, '_make_request_with_retry',
+                          side_effect=[
+                              requests.exceptions.ConnectionError("timeout"),
+                              Mock(status_code=404),  # arXiv title search
+                              Mock(status_code=404),  # ACL
+                              mock_200_semantic,       # Semantic Scholar
+                          ]):
+            findable, url, logs = verifier._check_findable_online(entry)
+
+        assert findable is True
+        log_text = ' '.join(logs)
+        assert 'Error resolving DOI' in log_text
+
+
+class TestCrossrefMetadata:
+    """Tests for _check_metadata with doi.org URLs."""
+
+    def test_metadata_verified_via_crossref(self):
+        """Title and authors should be verified against CrossRef data."""
+        verifier = CitationVerifier()
+        entry = {
+            'ID': 'dufeps1992',
+            'title': 'Stochastic differential utility',
+            'author': 'Duffie, D. and Epstein, L.G.',
+            'year': '1992',
+            'journal': 'Econometrica',
+            'doi': '10.2307/2951600',
+        }
+
+        cr_message = {
+            'title': ['Stochastic Differential Utility'],
+            'author': [
+                {'given': 'Darrell', 'family': 'Duffie'},
+                {'given': 'Larry G.', 'family': 'Epstein'},
+            ],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            correct, msg, details, logs = verifier._check_metadata(
+                entry, 'https://doi.org/10.2307/2951600')
+
+        assert correct is True
+        assert 'verified' in msg.lower()
+
+    def test_metadata_title_mismatch_via_crossref(self):
+        verifier = CitationVerifier()
+        entry = _make_entry()
+
+        cr_message = {
+            'title': ['A totally different paper'],
+            'author': [
+                {'given': 'M.', 'family': 'Briani'},
+                {'given': 'R.', 'family': 'Natalini'},
+                {'given': 'G.', 'family': 'Russo'},
+            ],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            correct, msg, details, logs = verifier._check_metadata(
+                entry, f"https://doi.org/{entry['doi']}")
+
+        assert correct is False
+        assert details is not None
+        assert details['title_match'] is False
+
+    def test_metadata_author_mismatch_via_crossref(self):
+        verifier = CitationVerifier()
+        entry = _make_entry()
+
+        cr_message = {
+            'title': ['Implicit-Explicit numerical schemes for jump-diffusion processes'],
+            'author': [
+                {'given': 'John', 'family': 'Smith'},
+                {'given': 'Jane', 'family': 'Doe'},
+            ],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            correct, msg, details, logs = verifier._check_metadata(
+                entry, f"https://doi.org/{entry['doi']}")
+
+        assert correct is False
+        assert 'author' in msg.lower()
+
+    def test_metadata_crossref_institutional_author(self):
+        """Institutional authors (using 'name' instead of given/family) should be handled."""
+        verifier = CitationVerifier()
+        entry = _make_entry(author='Council, National Research')
+
+        cr_message = {
+            'title': ['Implicit-Explicit numerical schemes for jump-diffusion processes'],
+            'author': [
+                {'name': 'National Research Council'},
+            ],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            correct, msg, details, logs = verifier._check_metadata(
+                entry, f"https://doi.org/{entry['doi']}")
+
+        # Should not crash; details should have author info
+        assert correct is not None or correct is None  # no crash
+        log_text = ' '.join(logs)
+        assert 'National Research Council' in log_text
+
+    def test_metadata_crossref_uses_mailto(self):
+        """CrossRef metadata check should include mailto in API URL."""
+        verifier = CitationVerifier(crossref_mailto='me@uni.edu')
+        entry = _make_entry()
+
+        cr_message = {
+            'title': ['Implicit-Explicit numerical schemes for jump-diffusion processes'],
+            'author': [{'given': 'M.', 'family': 'Briani'}],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp) as mock_req:
+            verifier._check_metadata(entry, f"https://doi.org/{entry['doi']}")
+
+        called_url = mock_req.call_args[0][1]
+        assert 'mailto=me@uni.edu' in called_url
+
+    def test_metadata_et_al_via_crossref(self):
+        """Entries with 'and others' should use the et-al matching logic."""
+        verifier = CitationVerifier()
+        entry = _make_entry(author='Briani, M. and Natalini, R. and others')
+
+        cr_message = {
+            'title': ['Implicit-Explicit numerical schemes for jump-diffusion processes'],
+            'author': [
+                {'given': 'M.', 'family': 'Briani'},
+                {'given': 'R.', 'family': 'Natalini'},
+                {'given': 'G.', 'family': 'Russo'},
+            ],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            correct, msg, details, logs = verifier._check_metadata(
+                entry, f"https://doi.org/{entry['doi']}")
+
+        # Briani is found in the online list, so should pass
+        assert correct is True
+
+
+class TestUserExamples:
+    """Tests based on the user's reported problem entries."""
+
+    def test_duffie_epstein_1992_found_via_doi(self):
+        """Duffie & Epstein (1992) should be found via CrossRef DOI, not arXiv."""
+        verifier = CitationVerifier()
+        entry = {
+            'ID': 'dufeps1992',
+            'title': 'Stochastic differential utility',
+            'author': 'Duffie, D. and L.G. Epstein',
+            'journal': 'Econometrica',
+            'volume': '60',
+            'pages': '353-394',
+            'year': '1992',
+            'doi': '10.2307/2951600',
+        }
+
+        cr_message = {
+            'title': ['Stochastic Differential Utility'],
+            'author': [
+                {'given': 'Darrell', 'family': 'Duffie'},
+                {'given': 'Larry G.', 'family': 'Epstein'},
+            ],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            findable, url, logs = verifier._check_findable_online(entry)
+
+        assert findable is True
+        assert url == 'https://doi.org/10.2307/2951600'
+        log_text = ' '.join(logs)
+        assert 'CrossRef' in log_text
+
+    def test_duffie_epstein_1992_metadata_matches(self):
+        """Duffie & Epstein metadata should match via CrossRef (not arXiv mismatch)."""
+        verifier = CitationVerifier()
+        entry = {
+            'ID': 'dufeps1992',
+            'title': 'Stochastic differential utility',
+            'author': 'Duffie, D. and L.G. Epstein',
+            'journal': 'Econometrica',
+            'volume': '60',
+            'pages': '353-394',
+            'year': '1992',
+            'doi': '10.2307/2951600',
+        }
+
+        cr_message = {
+            'title': ['Stochastic Differential Utility'],
+            'author': [
+                {'given': 'Darrell', 'family': 'Duffie'},
+                {'given': 'Larry G.', 'family': 'Epstein'},
+            ],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            correct, msg, details, logs = verifier._check_metadata(
+                entry, 'https://doi.org/10.2307/2951600')
+
+        assert correct is True
+        assert 'verified' in msg.lower()
+
+    def test_golosov_2014_found_via_doi(self):
+        """Golosov et al. (2014) should be found via CrossRef DOI, not Semantic Scholar."""
+        verifier = CitationVerifier()
+        entry = {
+            'ID': 'golosov2014',
+            'title': 'Optimal Taxes on Fossil Fuels in General Equilibrium',
+            'author': 'Golosov, M. and J. Hassler and P. Krusell and A. Tsyvinski',
+            'journal': 'Econometrica',
+            'volume': '82',
+            'number': '1',
+            'pages': '41-88',
+            'year': '2014',
+            'doi': '10.3982/ECTA10217',
+        }
+
+        cr_message = {
+            'title': ['Optimal Taxes on Fossil Fuel in General Equilibrium'],
+            'author': [
+                {'given': 'Mikhail', 'family': 'Golosov'},
+                {'given': 'John', 'family': 'Hassler'},
+                {'given': 'Per', 'family': 'Krusell'},
+                {'given': 'Aleh', 'family': 'Tsyvinski'},
+            ],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            findable, url, logs = verifier._check_findable_online(entry)
+
+        assert findable is True
+        assert url == 'https://doi.org/10.3982/ECTA10217'
+
+    def test_golosov_2014_metadata_matches(self):
+        """Golosov et al. metadata should match via CrossRef."""
+        verifier = CitationVerifier()
+        entry = {
+            'ID': 'golosov2014',
+            'title': 'Optimal Taxes on Fossil Fuels in General Equilibrium',
+            'author': 'Golosov, M. and J. Hassler and P. Krusell and A. Tsyvinski',
+            'journal': 'Econometrica',
+            'volume': '82',
+            'year': '2014',
+            'doi': '10.3982/ECTA10217',
+        }
+
+        cr_message = {
+            'title': ['Optimal Taxes on Fossil Fuel in General Equilibrium'],
+            'author': [
+                {'given': 'Mikhail', 'family': 'Golosov'},
+                {'given': 'John', 'family': 'Hassler'},
+                {'given': 'Per', 'family': 'Krusell'},
+                {'given': 'Aleh', 'family': 'Tsyvinski'},
+            ],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            correct, msg, details, logs = verifier._check_metadata(
+                entry, 'https://doi.org/10.3982/ECTA10217')
+
+        assert correct is True
+
+    def test_full_pipeline_duffie_epstein(self):
+        """Full verify_citation pipeline for Duffie & Epstein should pass."""
+        verifier = CitationVerifier()
+        entry = {
+            'ID': 'dufeps1992',
+            'title': 'Stochastic differential utility',
+            'author': 'Duffie, D. and L.G. Epstein',
+            'journal': 'Econometrica',
+            'volume': '60',
+            'year': '1992',
+            'doi': '10.2307/2951600',
+        }
+
+        cr_message = {
+            'title': ['Stochastic Differential Utility'],
+            'author': [
+                {'given': 'Darrell', 'family': 'Duffie'},
+                {'given': 'Larry G.', 'family': 'Epstein'},
+            ],
+            'published': {'date-parts': [[1992]]},
+            'volume': '60',
+            'container-title': ['Econometrica'],
+        }
+        mock_resp = _make_crossref_response(200, cr_message)
+
+        with patch.object(verifier, '_make_request_with_retry', return_value=mock_resp):
+            result = verifier.verify_citation(entry)
+
+        assert result['status'] == 'verified'
+        assert result['checks']['findable_online'] is True
+        assert result['checks']['metadata_correct'] is True
+        assert result['checks']['doi_correct'] is True
+
+
 class TestVerifyCitationDoiIntegration:
     """Tests for DOI check integration in verify_citation."""
 
