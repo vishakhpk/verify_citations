@@ -1295,9 +1295,15 @@ class CitationVerifier:
         verbose_logs = []
         doi = self._remove_curly_braces(entry.get('doi', '')).strip()
 
+        # Detect bogus DOI values that should not be sent to CrossRef
+        bogus_patterns = {'mimeo', 'n/a', 'none', 'na', 'tbd', 'forthcoming', 'unpublished'}
+        if doi.lower() in bogus_patterns or not re.search(r'10\.\d{4,}/', doi):
+            verbose_logs.append(f"  ⚠ Bogus or malformed DOI value: '{doi}'")
+            return None, f"⚠ DOI value '{doi}' does not look like a valid DOI", None, verbose_logs
+
         verbose_logs.append(f"  Checking DOI via CrossRef: {doi}")
 
-        url = f"https://api.crossref.org/works/{doi}"
+        url = f"https://api.crossref.org/works/{quote_plus(doi)}"
         if self.crossref_mailto:
             url += f"?mailto={self.crossref_mailto}"
 
